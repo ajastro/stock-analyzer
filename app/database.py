@@ -91,6 +91,25 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_price_snapshots_ticker
                 ON price_snapshots(ticker, fetched_at);
 
+            CREATE TABLE IF NOT EXISTS news_articles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker TEXT NOT NULL,
+                headline TEXT NOT NULL,
+                source TEXT,
+                url TEXT NOT NULL,
+                summary TEXT,
+                article_datetime INTEGER,
+                sentiment_compound REAL,
+                sentiment_label TEXT,
+                headline_sentiment REAL,
+                summary_sentiment REAL,
+                analyzed_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(ticker, url)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_news_articles_ticker
+                ON news_articles(ticker, analyzed_at);
+
             CREATE TABLE IF NOT EXISTS watchlist (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
