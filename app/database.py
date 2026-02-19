@@ -137,4 +137,19 @@ def init_db() -> None:
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
                 UNIQUE(user_id, ticker)
             );
+
+            CREATE TABLE IF NOT EXISTS message_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                message_sid TEXT,
+                message_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                body TEXT,
+                error TEXT,
+                sent_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_message_log_user
+                ON message_log(user_id, sent_at);
         """)
