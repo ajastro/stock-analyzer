@@ -110,6 +110,25 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_news_articles_ticker
                 ON news_articles(ticker, analyzed_at);
 
+            CREATE TABLE IF NOT EXISTS recommendations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                ticker TEXT NOT NULL,
+                signal TEXT NOT NULL,
+                combined_score REAL NOT NULL,
+                price_score REAL,
+                sentiment_score REAL,
+                current_price REAL,
+                reason TEXT,
+                affordable_shares REAL,
+                unrealized_gain_loss REAL,
+                generated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_recommendations_user
+                ON recommendations(user_id, generated_at);
+
             CREATE TABLE IF NOT EXISTS watchlist (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,

@@ -202,3 +202,25 @@ class PortfolioSentimentResponse(BaseModel):
     user_id: int
     tickers: list[PortfolioSentimentItem]
     overall_signal: str
+
+
+class RecommendationResponse(BaseModel):
+    id: Optional[int] = None
+    user_id: int
+    ticker: str
+    signal: str
+    combined_score: float
+    price_score: Optional[float]
+    sentiment_score: Optional[float]
+    current_price: Optional[float]
+    reason: Optional[str]
+    affordable_shares: Optional[float]
+    unrealized_gain_loss: Optional[float]
+    generated_at: Optional[str] = None
+
+
+class GenerateRecommendationsResponse(BaseModel):
+    user_id: int
+    generated_count: int
+    remaining_budget: float
+    recommendations: list[RecommendationResponse]
