@@ -14,11 +14,21 @@ SELL_THRESHOLD = -0.1
 STRONG_SELL_THRESHOLD = -0.3
 
 
-def _compute_price_score(ticker: str, conn: sqlite3.Connection) -> tuple[float, str]:
+def _fetch_quote_cached(ticker: str, cache: dict[str, dict]) -> dict:
+    if ticker in cache:
+        return cache[ticker]
     try:
         quote = get_quote(ticker)
     except Exception:
         quote = {}
+    cache[ticker] = quote
+    return quote
+
+
+def _compute_price_score(
+    ticker: str, conn: sqlite3.Connection, quote_cache: dict[str, dict]
+) -> tuple[float, float, str]:
+    quote = _fetch_quote_cached(ticker, quote_cache)
 
     if not quote or not quote.get("current_price"):
         snapshot = conn.execute(
@@ -29,30 +39,29 @@ def _compute_price_score(ticker: str, conn: sqlite3.Connection) -> tuple[float, 
         if snapshot:
             pct = snapshot["percent_change"] or 0.0
             score = max(-1.0, min(1.0, pct / 5.0))
-            return score, f"Price from snapshot: ${snapshot['current_price']:.2f} ({pct:+.2f}%)"
-        return 0.0, "No price data available"
+            return score, snapshot["current_price"], f"Price from snapshot: ${snapshot['current_price']:.2f} ({pct:+.2f}%)"
+        return 0.0, 0.0, "No price data available"
 
     pct = quote.get("percent_change", 0.0) or 0.0
     score = max(-1.0, min(1.0, pct / 5.0))
 
-    with get_db() as db:
-        db.execute(
-            """INSERT INTO price_snapshots
-               (ticker, current_price, change, percent_change, high, low, open, previous_close)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                quote["ticker"],
-                quote["current_price"],
-                quote.get("change"),
-                quote.get("percent_change"),
-                quote.get("high"),
-                quote.get("low"),
-                quote.get("open"),
-                quote.get("previous_close"),
-            ),
-        )
+    conn.execute(
+        """INSERT INTO price_snapshots
+           (ticker, current_price, change, percent_change, high, low, open, previous_close)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            quote["ticker"],
+            quote["current_price"],
+            quote.get("change"),
+            quote.get("percent_change"),
+            quote.get("high"),
+            quote.get("low"),
+            quote.get("open"),
+            quote.get("previous_close"),
+        ),
+    )
 
-    return score, f"Current: ${quote['current_price']:.2f} ({pct:+.2f}%)"
+    return score, quote["current_price"], f"Current: ${quote['current_price']:.2f} ({pct:+.2f}%)"
 
 
 def _compute_sentiment_score(ticker: str, conn: sqlite3.Connection) -> tuple[float, str]:
@@ -85,22 +94,6 @@ def _signal_from_score(score: float) -> str:
     if score <= SELL_THRESHOLD:
         return "SELL"
     return "HOLD"
-
-
-def _get_current_price(ticker: str, conn: sqlite3.Connection) -> float:
-    try:
-        quote = get_quote(ticker)
-        if quote and quote.get("current_price"):
-            return quote["current_price"]
-    except Exception:
-        pass
-    snapshot = conn.execute(
-        "SELECT current_price FROM price_snapshots WHERE ticker = ? ORDER BY fetched_at DESC LIMIT 1",
-        (ticker,),
-    ).fetchone()
-    if snapshot:
-        return snapshot["current_price"]
-    return 0.0
 
 
 def generate_recommendations(user_id: int) -> list[dict]:
@@ -142,15 +135,14 @@ def generate_recommendations(user_id: int) -> list[dict]:
             set(h["ticker"] for h in holdings) | set(r["ticker"] for r in watchlist)
         )
 
+        quote_cache: dict[str, dict] = {}
         results = []
         for ticker in all_tickers:
-            price_score, price_reason = _compute_price_score(ticker, conn)
+            price_score, current_price, price_reason = _compute_price_score(ticker, conn, quote_cache)
             sent_score, sent_reason = _compute_sentiment_score(ticker, conn)
 
             combined = price_score * PRICE_WEIGHT + sent_score * SENTIMENT_WEIGHT
             signal = _signal_from_score(combined)
-
-            current_price = _get_current_price(ticker, conn)
 
             affordable_shares = None
             unrealized_gl = None
