@@ -163,3 +163,42 @@ class PortfolioSummaryResponse(BaseModel):
     total_cost_basis: float
     total_market_value: Optional[float]
     total_gain_loss: Optional[float]
+
+
+class SentimentArticleResponse(BaseModel):
+    id: int
+    ticker: str
+    headline: str
+    source: Optional[str]
+    url: str
+    summary: Optional[str]
+    article_datetime: Optional[int]
+    sentiment_compound: Optional[float]
+    sentiment_label: Optional[str]
+    headline_sentiment: Optional[float]
+    summary_sentiment: Optional[float]
+    analyzed_at: str
+
+
+class SentimentSummaryResponse(BaseModel):
+    ticker: str
+    total_articles: int
+    avg_sentiment: float
+    bullish_count: int
+    bearish_count: int
+    neutral_count: int
+    signal: str
+    latest_articles: list[SentimentArticleResponse]
+
+
+class PortfolioSentimentItem(BaseModel):
+    ticker: str
+    total_articles: int
+    avg_sentiment: float
+    signal: str
+
+
+class PortfolioSentimentResponse(BaseModel):
+    user_id: int
+    tickers: list[PortfolioSentimentItem]
+    overall_signal: str

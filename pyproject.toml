@@ -13,6 +13,7 @@ pydantic-settings = "^2.13.0"
 aiosqlite = "^0.22.1"
 finnhub-python = "^2.4.27"
 httpx = "^0.28.1"
+vadersentiment = "^3.3.2"
 
 
 [build-system]
