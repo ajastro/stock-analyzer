@@ -76,3 +76,90 @@ class TransactionResponse(BaseModel):
     total_amount: float
     profit: Optional[float]
     created_at: str
+
+
+class StockQuoteResponse(BaseModel):
+    ticker: str
+    current_price: float
+    change: Optional[float]
+    percent_change: Optional[float]
+    high: Optional[float]
+    low: Optional[float]
+    open: Optional[float]
+    previous_close: Optional[float]
+    timestamp: Optional[int]
+
+
+class CompanyProfileResponse(BaseModel):
+    ticker: str
+    name: str
+    country: str
+    currency: str
+    exchange: str
+    ipo_date: str
+    market_cap: float
+    industry: str
+    logo: str
+    web_url: str
+
+
+class SymbolSearchResult(BaseModel):
+    symbol: str
+    description: str
+    type: str
+
+
+class CandleResponse(BaseModel):
+    timestamp: int
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+
+
+class NewsArticleResponse(BaseModel):
+    headline: str
+    source: str
+    url: str
+    summary: str
+    datetime: int
+    related: str
+
+
+class PriceSnapshotResponse(BaseModel):
+    id: int
+    ticker: str
+    current_price: float
+    change: Optional[float]
+    percent_change: Optional[float]
+    high: Optional[float]
+    low: Optional[float]
+    open: Optional[float]
+    previous_close: Optional[float]
+    fetched_at: str
+
+
+class WatchlistItemResponse(BaseModel):
+    id: int
+    user_id: int
+    ticker: str
+    added_at: str
+
+
+class PortfolioSummaryItem(BaseModel):
+    ticker: str
+    shares: float
+    avg_cost_basis: float
+    current_price: Optional[float]
+    market_value: Optional[float]
+    gain_loss: Optional[float]
+    gain_loss_percent: Optional[float]
+
+
+class PortfolioSummaryResponse(BaseModel):
+    user_id: int
+    holdings: list[PortfolioSummaryItem]
+    total_cost_basis: float
+    total_market_value: Optional[float]
+    total_gain_loss: Optional[float]
