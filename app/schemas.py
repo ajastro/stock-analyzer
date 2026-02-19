@@ -224,3 +224,27 @@ class GenerateRecommendationsResponse(BaseModel):
     generated_count: int
     remaining_budget: float
     recommendations: list[RecommendationResponse]
+
+
+class SendMessageResponse(BaseModel):
+    user_id: int
+    message_sid: Optional[str]
+    status: str
+    message_type: str
+
+
+class MessageLogResponse(BaseModel):
+    id: int
+    user_id: int
+    message_sid: Optional[str]
+    message_type: str
+    status: str
+    body: Optional[str]
+    error: Optional[str]
+    sent_at: str
+
+
+class BulkSendResponse(BaseModel):
+    sent: int
+    failed: int
+    results: list[SendMessageResponse]
