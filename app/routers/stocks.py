@@ -232,32 +232,38 @@ def refresh_portfolio_prices(user_id: int):
         ).fetchall()
 
     tickers = list({r["ticker"] for r in holdings} | {r["ticker"] for r in watchlist})
-    results = []
+    quotes = []
     for ticker in sorted(tickers):
         try:
             data = get_quote(ticker)
-            if data:
-                with get_db() as conn:
-                    conn.execute(
-                        """INSERT INTO price_snapshots
-                           (ticker, current_price, change, percent_change, high, low, open, previous_close)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (
-                            data["ticker"],
-                            data["current_price"],
-                            data.get("change"),
-                            data.get("percent_change"),
-                            data.get("high"),
-                            data.get("low"),
-                            data.get("open"),
-                            data.get("previous_close"),
-                        ),
-                    )
+            quotes.append((ticker, data))
+        except Exception as e:
+            quotes.append((ticker, {"_error": str(e)}))
+
+    results = []
+    with get_db() as conn:
+        for ticker, data in quotes:
+            if "_error" in data:
+                results.append({"ticker": ticker, "status": "error", "detail": data["_error"]})
+            elif data:
+                conn.execute(
+                    """INSERT INTO price_snapshots
+                       (ticker, current_price, change, percent_change, high, low, open, previous_close)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        data["ticker"],
+                        data["current_price"],
+                        data.get("change"),
+                        data.get("percent_change"),
+                        data.get("high"),
+                        data.get("low"),
+                        data.get("open"),
+                        data.get("previous_close"),
+                    ),
+                )
                 results.append({"ticker": ticker, "status": "ok", "price": data["current_price"]})
             else:
                 results.append({"ticker": ticker, "status": "no_data"})
-        except Exception as e:
-            results.append({"ticker": ticker, "status": "error", "detail": str(e)})
     return {"refreshed": len(results), "results": results}
 
 

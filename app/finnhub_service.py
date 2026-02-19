@@ -4,16 +4,14 @@ from datetime import datetime, timedelta
 
 import finnhub
 
-FINNHUB_API_KEY = os.environ.get("FINNHUB_API_KEY", "")
-
-
 def _get_client() -> finnhub.Client:
-    if not FINNHUB_API_KEY:
+    api_key = os.environ.get("FINNHUB_API_KEY", "")
+    if not api_key:
         raise RuntimeError(
             "FINNHUB_API_KEY environment variable is not set. "
             "Get a free key at https://finnhub.io/register"
         )
-    return finnhub.Client(api_key=FINNHUB_API_KEY)
+    return finnhub.Client(api_key=api_key)
 
 
 def get_quote(ticker: str) -> dict:
