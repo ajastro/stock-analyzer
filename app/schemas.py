@@ -4,7 +4,7 @@ from typing import Optional
 
 class UserCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
-    phone_number: str = Field(..., min_length=10, max_length=20)
+    phone_number: Optional[str] = Field(None, max_length=20)
 
 
 class UserResponse(BaseModel):
@@ -211,6 +211,7 @@ class RecommendationResponse(BaseModel):
     signal: str
     combined_score: float
     price_score: Optional[float]
+    technical_score: Optional[float]
     sentiment_score: Optional[float]
     current_price: Optional[float]
     reason: Optional[str]

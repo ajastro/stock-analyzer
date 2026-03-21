@@ -1,0 +1,8 @@
+fastapi[standard]==0.135.1
+uvicorn==0.42.0
+python-dotenv==1.2.2
+finnhub-python==2.4.27
+yfinance==1.2.0
+vaderSentiment==3.3.2
+APScheduler==3.11.2
+httpx==0.28.1

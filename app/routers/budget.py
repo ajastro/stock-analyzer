@@ -64,22 +64,35 @@ def record_buy(user_id: int, buy: BuyRecord):
             (user_id, buy.ticker.upper()),
         ).fetchone()
 
+        # Check if there's a recent BUY/STRONG_BUY recommendation for this ticker
+        recent_rec = conn.execute(
+            """SELECT signal FROM recommendations
+               WHERE user_id = ? AND ticker = ? AND signal IN ('BUY', 'STRONG_BUY')
+               ORDER BY generated_at DESC LIMIT 1""",
+            (user_id, buy.ticker.upper()),
+        ).fetchone()
+        was_alerted = 1 if recent_rec else 0
+
         if existing:
             new_shares = existing["shares"] + buy.shares
             new_cost = (
                 (existing["shares"] * existing["avg_cost_basis"])
                 + (buy.shares * buy.price_per_share)
             ) / new_shares
-            conn.execute(
-                "UPDATE holdings SET shares = ?, avg_cost_basis = ? WHERE id = ?",
-                (new_shares, new_cost, existing["id"]),
+            update_alert = (
+                "UPDATE holdings SET shares = ?, avg_cost_basis = ?, "
+                "alert_triggered = CASE WHEN alert_triggered = 0 THEN ? ELSE alert_triggered END, "
+                "alert_date = CASE WHEN alert_triggered = 0 AND ? = 1 THEN ? ELSE alert_date END "
+                "WHERE id = ?"
             )
+            conn.execute(update_alert, (new_shares, new_cost, was_alerted, was_alerted, today, existing["id"]))
         else:
             conn.execute(
                 """INSERT INTO holdings
-                   (user_id, ticker, shares, avg_cost_basis, acquired_date)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (user_id, buy.ticker.upper(), buy.shares, buy.price_per_share, today),
+                   (user_id, ticker, shares, avg_cost_basis, acquired_date, alert_triggered, alert_date)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (user_id, buy.ticker.upper(), buy.shares, buy.price_per_share, today,
+                 was_alerted, today if was_alerted else None),
             )
 
         cursor = conn.execute(

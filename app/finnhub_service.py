@@ -1,5 +1,4 @@
 import os
-import time
 from datetime import datetime, timedelta
 
 import finnhub
@@ -65,24 +64,22 @@ def search_symbol(query: str) -> list[dict]:
     ]
 
 
-def get_candles(ticker: str, resolution: str = "D", days: int = 30) -> list[dict]:
-    client = _get_client()
-    now = int(time.time())
-    start = int((datetime.utcnow() - timedelta(days=days)).timestamp())
-    data = client.stock_candles(ticker.upper(), resolution, start, now)
-    if not data or data.get("s") == "no_data":
+def get_candles(ticker: str, resolution: str = "D", days: int = 60) -> list[dict]:
+    import yfinance as yf
+    hist = yf.Ticker(ticker.upper()).history(period=f"{days}d")
+    if hist.empty:
         return []
-    candles = []
-    for i in range(len(data.get("t", []))):
-        candles.append({
-            "timestamp": data["t"][i],
-            "open": data["o"][i],
-            "high": data["h"][i],
-            "low": data["l"][i],
-            "close": data["c"][i],
-            "volume": data["v"][i],
-        })
-    return candles
+    return [
+        {
+            "timestamp": int(ts.timestamp()),
+            "open": row["Open"],
+            "high": row["High"],
+            "low": row["Low"],
+            "close": row["Close"],
+            "volume": row["Volume"],
+        }
+        for ts, row in hist.iterrows()
+    ]
 
 
 def get_company_news(ticker: str, days: int = 7) -> list[dict]:

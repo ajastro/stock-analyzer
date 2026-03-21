@@ -1,3 +1,5 @@
+import uuid
+
 from fastapi import APIRouter, HTTPException
 from app.database import get_db
 from app.schemas import (
@@ -12,19 +14,11 @@ router = APIRouter(prefix="/users", tags=["users"])
 
 @router.post("/register", response_model=UserResponse, status_code=201)
 def register_user(user: UserCreate):
+    phone = user.phone_number or f"auto_{uuid.uuid4().hex[:12]}"
     with get_db() as conn:
-        existing = conn.execute(
-            "SELECT id FROM users WHERE phone_number = ?",
-            (user.phone_number,),
-        ).fetchone()
-        if existing:
-            raise HTTPException(
-                status_code=409,
-                detail="User with this phone number already exists",
-            )
         cursor = conn.execute(
             "INSERT INTO users (name, phone_number) VALUES (?, ?)",
-            (user.name, user.phone_number),
+            (user.name, phone),
         )
         user_id = cursor.lastrowid
         row = conn.execute(

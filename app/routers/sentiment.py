@@ -1,8 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query
 
 from app.database import get_db
-from app.finnhub_service import get_company_news
-from app.sentiment_service import analyze_article
+from app.sentiment_service import analyze_article, refresh_sentiment_for_ticker
 from app.schemas import (
     SentimentArticleResponse,
     SentimentSummaryResponse,
@@ -15,67 +14,21 @@ router = APIRouter(prefix="/sentiment", tags=["sentiment"])
 
 @router.post("/analyze/{ticker}", response_model=list[SentimentArticleResponse])
 def analyze_ticker_news(ticker: str, days: int = Query(7, ge=1, le=30)):
-    try:
-        articles = get_company_news(ticker, days)
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+    with get_db() as conn:
+        count = refresh_sentiment_for_ticker(ticker.upper(), conn, days)
 
-    if not articles:
+    if count == 0:
         raise HTTPException(status_code=404, detail=f"No news found for {ticker.upper()}")
 
-    results: list[SentimentArticleResponse] = []
     with get_db() as conn:
-        for a in articles:
-            url = a.get("url", "")
-            if not url:
-                continue
-            sentiment = analyze_article(a.get("headline", ""), a.get("summary", ""))
-            existing = conn.execute(
-                "SELECT id FROM news_articles WHERE ticker = ? AND url = ?",
-                (ticker.upper(), url),
-            ).fetchone()
-            if existing:
-                conn.execute(
-                    """UPDATE news_articles
-                       SET sentiment_compound = ?, sentiment_label = ?,
-                           headline_sentiment = ?, summary_sentiment = ?,
-                           analyzed_at = datetime('now')
-                       WHERE id = ?""",
-                    (
-                        sentiment["compound"],
-                        sentiment["label"],
-                        sentiment["headline_sentiment"],
-                        sentiment["summary_sentiment"],
-                        existing["id"],
-                    ),
-                )
-                row = conn.execute(
-                    "SELECT * FROM news_articles WHERE id = ?", (existing["id"],)
-                ).fetchone()
-            else:
-                cursor = conn.execute(
-                    """INSERT INTO news_articles
-                       (ticker, headline, source, url, summary, article_datetime,
-                        sentiment_compound, sentiment_label, headline_sentiment, summary_sentiment)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        ticker.upper(),
-                        a.get("headline", ""),
-                        a.get("source", ""),
-                        url,
-                        a.get("summary", ""),
-                        a.get("datetime", 0),
-                        sentiment["compound"],
-                        sentiment["label"],
-                        sentiment["headline_sentiment"],
-                        sentiment["summary_sentiment"],
-                    ),
-                )
-                row = conn.execute(
-                    "SELECT * FROM news_articles WHERE id = ?", (cursor.lastrowid,)
-                ).fetchone()
-            results.append(_article_from_row(row))
-    return results
+        rows = conn.execute(
+            """SELECT * FROM news_articles
+               WHERE ticker = ?
+               ORDER BY analyzed_at DESC
+               LIMIT ?""",
+            (ticker.upper(), count),
+        ).fetchall()
+    return [_article_from_row(r) for r in rows]
 
 
 @router.get("/{ticker}", response_model=list[SentimentArticleResponse])

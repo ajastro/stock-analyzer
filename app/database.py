@@ -2,6 +2,9 @@ import os
 import sqlite3
 from contextlib import contextmanager
 
+from dotenv import load_dotenv
+load_dotenv()
+
 DB_PATH = os.environ.get("DATABASE_PATH", "/data/app.db")
 if not os.path.exists(os.path.dirname(DB_PATH)):
     DB_PATH = os.path.join(os.path.dirname(__file__), "..", "app.db")
@@ -26,6 +29,20 @@ def get_db():
         raise
     finally:
         conn.close()
+
+
+def _run_migrations(conn: sqlite3.Connection) -> None:
+    """Apply schema migrations that can't be done inside executescript."""
+    migrations = [
+        "ALTER TABLE recommendations ADD COLUMN technical_score REAL",
+        "ALTER TABLE holdings ADD COLUMN alert_triggered INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE holdings ADD COLUMN alert_date TEXT",
+    ]
+    for sql in migrations:
+        try:
+            conn.execute(sql)
+        except sqlite3.OperationalError:
+            pass  # column already exists
 
 
 def init_db() -> None:
@@ -153,3 +170,4 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_message_log_user
                 ON message_log(user_id, sent_at);
         """)
+        _run_migrations(conn)
