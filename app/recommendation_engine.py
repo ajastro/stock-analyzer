@@ -305,7 +305,7 @@ def generate_recommendations(user_id: int) -> list[dict]:
             set(h["ticker"] for h in holdings) | set(r["ticker"] for r in watchlist)
         )
 
-        # Fetch all external data in parallel
+        # Fetch external API data in parallel (no DB access in threads)
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         quote_cache: dict[str, dict] = {}
@@ -313,17 +313,20 @@ def generate_recommendations(user_id: int) -> list[dict]:
         analyst_cache: dict[str, tuple] = {}
         earnings_cache: dict[str, tuple] = {}
 
-        def _prefetch(ticker: str):
+        def _prefetch_external(ticker: str):
             _fetch_quote_cached(ticker, quote_cache)
             _fetch_candles_cached(ticker, candle_cache)
             _compute_analyst_score(ticker, analyst_cache)
             _compute_earnings_score(ticker, earnings_cache)
-            refresh_sentiment_for_ticker(ticker, conn)
 
         with ThreadPoolExecutor(max_workers=min(len(all_tickers), 2)) as ex:
-            futures = {ex.submit(_prefetch, t): t for t in all_tickers}
+            futures = {ex.submit(_prefetch_external, t): t for t in all_tickers}
             for f in as_completed(futures):
-                f.result()  # surface any exceptions
+                f.result()
+
+        # Sentiment refresh uses DB connection — must stay sequential
+        for ticker in all_tickers:
+            refresh_sentiment_for_ticker(ticker, conn)
 
         results = []
         for ticker in all_tickers:
