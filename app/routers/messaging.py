@@ -62,6 +62,41 @@ def preview_email(user_id: int):
     return HTMLResponse(html)
 
 
+@router.post("/send/{user_id}")
+def send_report(user_id: int):
+    """Send the latest recommendations email for a user."""
+    with get_db() as conn:
+        user = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+    if not is_configured():
+        raise HTTPException(status_code=400, detail="Email not configured. Set RESEND_API_KEY and ALERT_EMAIL.")
+
+    recs = generate_recommendations(user_id)
+    if not recs:
+        raise HTTPException(status_code=400, detail="No recommendations to send. Run analysis first.")
+
+    subject, html = format_morning_email(recs)
+    try:
+        send_email(subject, html)
+        with get_db() as conn:
+            conn.execute(
+                """INSERT INTO message_log (user_id, message_type, status, body)
+                   VALUES (?, ?, ?, ?)""",
+                (user_id, "email", "sent", subject),
+            )
+        return {"status": "sent", "subject": subject}
+    except Exception as e:
+        with get_db() as conn:
+            conn.execute(
+                """INSERT INTO message_log (user_id, message_type, status, error)
+                   VALUES (?, ?, ?, ?)""",
+                (user_id, "email", "failed", str(e)),
+            )
+        raise HTTPException(status_code=500, detail=f"Email failed: {e}")
+
+
 @router.post("/test-email")
 def test_email():
     """Send a test email to verify SMTP configuration."""

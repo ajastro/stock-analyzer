@@ -322,6 +322,7 @@ def _render_user_section(user_id: int, name: str, generated_at, recs, holdings_c
           <button class="run-btn" style="background:#10b981" onclick="openAddStock({user_id})">+ Add Stock</button>
           <button class="run-btn" style="background:#6b7280" onclick="openManageHoldings({user_id})">✎ Manage Holdings</button>
           <button class="run-btn" onclick="runDaily({user_id}, this)">▶ Run Analysis</button>
+          <button class="run-btn" style="background:#7c3aed" onclick="sendEmail({user_id}, this)">✉ Send Email</button>
         </div>
       </div>
       {body}
@@ -737,6 +738,22 @@ def _render_page(content: str, api_key: str = "") -> str:
       }}
     }}
 
+    async function sendEmail(userId, btn) {{
+      btn.disabled = true;
+      btn.textContent = '⏳ Sending…';
+      try {{
+        const res = await fetch(`/messaging/send/${{userId}}`, {{ method: 'POST', headers: _authHeaders }});
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Unknown error');
+        showToast(`✅ Email sent — ${{data.subject}}`, 'ok');
+      }} catch (e) {{
+        showToast('❌ ' + e.message, 'err');
+      }} finally {{
+        btn.disabled = false;
+        btn.textContent = '✉ Send Email';
+      }}
+    }}
+
     async function runDaily(userId, btn) {{
       btn.disabled = true;
       btn.textContent = '⏳ Running…';
@@ -744,8 +761,8 @@ def _render_page(content: str, api_key: str = "") -> str:
         const res = await fetch(`/run-daily/${{userId}}`, {{ method: 'POST', headers: _authHeaders }});
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Unknown error');
-        const summary = `✅ Done! ${{data.recommendations_generated}} recs · ${{data.prices_refreshed}} prices · ${{data.articles_analyzed}} articles · email: ${{data.whatsapp_status || 'unknown'}}`;
-        const errors = data.errors && data.errors.length ? `\n⚠️ ${{data.errors.join(' | ')}}` : '';
+        const summary = `✅ Analysis done — ${{data.recommendations_generated}} recs · ${{data.prices_refreshed}} prices · ${{data.articles_analyzed}} articles`;
+        const errors = data.errors && data.errors.length ? ` ⚠️ ${{data.errors.join(' | ')}}` : '';
         showToast(summary + errors, data.errors && data.errors.length ? 'err' : 'ok');
         setTimeout(() => location.reload(), 3000);
       }} catch (e) {{
