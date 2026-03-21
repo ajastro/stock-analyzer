@@ -6,3 +6,4 @@ yfinance==1.2.0
 vaderSentiment==3.3.2
 APScheduler==3.11.2
 httpx==0.28.1
+resend==2.26.0

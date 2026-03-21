@@ -1,8 +1,5 @@
 import os
-import smtplib
 from datetime import datetime
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from zoneinfo import ZoneInfo
 
 ET = ZoneInfo("America/New_York")
@@ -11,37 +8,25 @@ _BUY_SIGNALS = ("STRONG_BUY", "BUY")
 _SELL_SIGNALS = ("STRONG_SELL", "SELL")
 
 
-def _smtp_config() -> dict:
-    return {
-        "host": os.environ.get("SMTP_HOST", "smtp.gmail.com"),
-        "port": int(os.environ.get("SMTP_PORT", "587")),
-        "user": os.environ.get("SMTP_USER", ""),
-        "password": os.environ.get("SMTP_PASSWORD", ""),
-        "alert_email": os.environ.get("ALERT_EMAIL", ""),
-    }
-
-
 def is_configured() -> bool:
-    c = _smtp_config()
-    return bool(c["user"] and c["password"] and (c["alert_email"] or c["user"]))
+    return bool(os.environ.get("RESEND_API_KEY") and os.environ.get("ALERT_EMAIL"))
 
 
 def send_email(subject: str, html_body: str) -> None:
-    c = _smtp_config()
-    if not is_configured():
-        raise RuntimeError(
-            "Email not configured. Set SMTP_USER, SMTP_PASSWORD, and ALERT_EMAIL."
-        )
-    to_addr = c["alert_email"] or c["user"]
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = c["user"]
-    msg["To"] = to_addr
-    msg.attach(MIMEText(html_body, "html"))
-    with smtplib.SMTP(c["host"], c["port"]) as server:
-        server.starttls()
-        server.login(c["user"], c["password"])
-        server.sendmail(c["user"], to_addr, msg.as_string())
+    import resend
+    resend.api_key = os.environ.get("RESEND_API_KEY", "")
+    alert_email = os.environ.get("ALERT_EMAIL", "")
+    from_email = os.environ.get("RESEND_FROM_EMAIL", "onboarding@resend.dev")
+
+    if not resend.api_key or not alert_email:
+        raise RuntimeError("Email not configured. Set RESEND_API_KEY and ALERT_EMAIL.")
+
+    resend.Emails.send({
+        "from": from_email,
+        "to": [alert_email],
+        "subject": subject,
+        "html": html_body,
+    })
 
 
 def format_morning_email(recs: list[dict]) -> tuple[str, str]:
