@@ -305,14 +305,26 @@ def generate_recommendations(user_id: int) -> list[dict]:
             set(h["ticker"] for h in holdings) | set(r["ticker"] for r in watchlist)
         )
 
-        # Refresh news sentiment for every ticker before scoring
-        for ticker in all_tickers:
-            refresh_sentiment_for_ticker(ticker, conn)
+        # Fetch all external data in parallel
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
         quote_cache: dict[str, dict] = {}
         candle_cache: dict[str, list] = {}
         analyst_cache: dict[str, tuple] = {}
         earnings_cache: dict[str, tuple] = {}
+
+        def _prefetch(ticker: str):
+            _fetch_quote_cached(ticker, quote_cache)
+            _fetch_candles_cached(ticker, candle_cache)
+            _compute_analyst_score(ticker, analyst_cache)
+            _compute_earnings_score(ticker, earnings_cache)
+            refresh_sentiment_for_ticker(ticker, conn)
+
+        with ThreadPoolExecutor(max_workers=min(len(all_tickers), 2)) as ex:
+            futures = {ex.submit(_prefetch, t): t for t in all_tickers}
+            for f in as_completed(futures):
+                f.result()  # surface any exceptions
+
         results = []
         for ticker in all_tickers:
             price_score, current_price, price_reason = _compute_price_score(ticker, conn, quote_cache)
