@@ -113,7 +113,7 @@ async def dashboard():
           <h2>Welcome to Stock Analyzer</h2>
           <p style="margin-bottom:20px">Get started by creating your account below.</p>
           <button class="run-btn" onclick="openModal()">+ Add User</button>
-        </div>"""))
+        </div>""", _API_SECRET_KEY))
 
     sections = ""
     with get_db() as conn:
@@ -139,7 +139,7 @@ async def dashboard():
 
             sections += _render_user_section(user["id"], user["name"], ts, recs, holdings_count)
 
-    return HTMLResponse(_render_page(sections))
+    return HTMLResponse(_render_page(sections, _API_SECRET_KEY))
 
 
 def _plain_summary(rec) -> str:
@@ -317,7 +317,7 @@ def _render_user_section(user_id: int, name: str, generated_at, recs, holdings_c
     </div>"""
 
 
-def _render_page(content: str) -> str:
+def _render_page(content: str, api_key: str = "") -> str:
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -512,6 +512,11 @@ def _render_page(content: str) -> str:
   </style>
 
   <script>
+    const _apiKey = "{api_key}";
+    const _authHeaders = _apiKey
+      ? {{'Content-Type': 'application/json', 'Authorization': 'Bearer ' + _apiKey}}
+      : {{'Content-Type': 'application/json'}};
+
     let _newUserId = null;
     let _addStockUserId = null;
 
@@ -543,7 +548,7 @@ def _render_page(content: str) -> str:
       try {{
         const res = await fetch(`/users/${{_addStockUserId}}/portfolio`, {{
           method: 'POST',
-          headers: {{'Content-Type': 'application/json'}},
+          headers: _authHeaders,
           body: JSON.stringify({{ ticker, shares: parseFloat(shares), avg_cost_basis: parseFloat(cost), acquired_date: date }}),
         }});
         const data = await res.json();
@@ -574,7 +579,7 @@ def _render_page(content: str) -> str:
       try {{
         const res  = await fetch('/users/register', {{
           method: 'POST',
-          headers: {{'Content-Type': 'application/json'}},
+          headers: _authHeaders,
           body: JSON.stringify({{ name }}),
         }});
         const data = await res.json();
@@ -621,7 +626,7 @@ def _render_page(content: str) -> str:
       try {{
         const res = await fetch(`/users/${{_newUserId}}/onboard`, {{
           method: 'POST',
-          headers: {{'Content-Type': 'application/json'}},
+          headers: _authHeaders,
           body: JSON.stringify({{ has_prior_stocks: hasStocks, holdings }}),
         }});
         const data = await res.json();
@@ -638,7 +643,7 @@ def _render_page(content: str) -> str:
       btn.disabled = true;
       btn.textContent = '⏳ Running…';
       try {{
-        const res = await fetch(`/run-daily/${{userId}}`, {{ method: 'POST' }});
+        const res = await fetch(`/run-daily/${{userId}}`, {{ method: 'POST', headers: _authHeaders }});
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Unknown error');
         showToast(`✅ Done! ${{data.recommendations_generated}} recs · ${{data.prices_refreshed}} prices · ${{data.articles_analyzed}} articles`, 'ok');
