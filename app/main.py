@@ -35,10 +35,12 @@ def _require_dashboard_auth(credentials: HTTPBasicCredentials = Depends(_basic_a
         )
 
 
+_BROWSER_PATHS = {"/", "/dashboard", "/healthz"}
+
 def _require_api_key(request: Request):
-    """Bearer token check for all API routes."""
-    if not _API_SECRET_KEY:
-        return  # auth disabled locally if no key set
+    """Bearer token check for all API routes. Skips browser-facing paths."""
+    if request.url.path in _BROWSER_PATHS or not _API_SECRET_KEY:
+        return
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer ") or not secrets.compare_digest(
         auth_header[len("Bearer "):], _API_SECRET_KEY
@@ -84,12 +86,12 @@ app.include_router(messaging.router)
 app.include_router(run_daily.router)
 
 
-@app.get("/", dependencies=[])
+@app.get("/")
 async def root():
     return RedirectResponse(url="/dashboard")
 
 
-@app.get("/healthz", dependencies=[])  # public — Railway uses this for health checks
+@app.get("/healthz")  # public — Railway uses this for health checks
 async def healthz():
     return {"status": "ok"}
 
