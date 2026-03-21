@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
@@ -35,7 +36,7 @@ def _require_dashboard_auth(credentials: HTTPBasicCredentials = Depends(_basic_a
         )
 
 
-_BROWSER_PATHS = {"/", "/dashboard", "/healthz"}
+_BROWSER_PATHS = {"/", "/dashboard", "/healthz", "/docs", "/openapi.json", "/redoc"}
 
 def _require_api_key(request: Request):
     """Bearer token check for all API routes. Skips browser-facing paths."""
@@ -65,7 +66,9 @@ app = FastAPI(
     title="Stock Analyzer",
     version="0.1.0",
     lifespan=lifespan,
-    dependencies=[Depends(_require_api_key)],  # protects all API routes
+    dependencies=[Depends(_require_api_key)],
+    swagger_ui_init_oauth={},
+    swagger_ui_parameters={"persistAuthorization": True},
 )
 
 app.add_middleware(
@@ -315,6 +318,22 @@ def _render_user_section(user_id: int, name: str, generated_at, recs, holdings_c
       </div>
       {body}
     </div>"""
+
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
+    schema.setdefault("components", {}).setdefault("securitySchemes", {})["BearerAuth"] = {
+        "type": "http", "scheme": "bearer"
+    }
+    for path in schema.get("paths", {}).values():
+        for op in path.values():
+            op.setdefault("security", [{"BearerAuth": []}])
+    app.openapi_schema = schema
+    return schema
+
+app.openapi = custom_openapi  # type: ignore
 
 
 def _render_page(content: str, api_key: str = "") -> str:
@@ -646,8 +665,10 @@ def _render_page(content: str, api_key: str = "") -> str:
         const res = await fetch(`/run-daily/${{userId}}`, {{ method: 'POST', headers: _authHeaders }});
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Unknown error');
-        showToast(`✅ Done! ${{data.recommendations_generated}} recs · ${{data.prices_refreshed}} prices · ${{data.articles_analyzed}} articles`, 'ok');
-        setTimeout(() => location.reload(), 1800);
+        const summary = `✅ Done! ${{data.recommendations_generated}} recs · ${{data.prices_refreshed}} prices · ${{data.articles_analyzed}} articles · email: ${{data.whatsapp_status || 'unknown'}}`;
+        const errors = data.errors && data.errors.length ? `\n⚠️ ${{data.errors.join(' | ')}}` : '';
+        showToast(summary + errors, data.errors && data.errors.length ? 'err' : 'ok');
+        setTimeout(() => location.reload(), 3000);
       }} catch (e) {{
         showToast('❌ ' + e.message, 'err');
         btn.disabled = false;
