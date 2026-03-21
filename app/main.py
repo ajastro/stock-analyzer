@@ -287,7 +287,7 @@ def _render_user_section(user_id: int, name: str, generated_at, recs, holdings_c
             <tr class="rec-row" data-reason="{r['reason'] or ''}">
               <td><strong style="font-size:15px">{r['ticker']}</strong></td>
               <td>
-                <span class="badge" style="background:{meta['color']}">{meta['emoji']} {r['signal']}</span>
+                <span class="badge" style="background:{meta['color']}">{meta['emoji']} {r['signal'].replace('_', ' ')}</span>
               </td>
               <td>{price}</td>
               <td style="font-family:monospace;font-size:13px">{score}</td>
@@ -303,7 +303,7 @@ def _render_user_section(user_id: int, name: str, generated_at, recs, holdings_c
         <table>
           <thead><tr>
             <th>Ticker</th><th>Signal</th><th>Price</th>
-            <th>Score</th><th>P&amp;L</th><th>Affordable</th><th>Reason</th>
+            <th>Score</th><th>P&amp;L</th><th>Affordable<br><span style="font-weight:400;color:#9ca3af;text-transform:none;font-size:10px">based on $100/day budget</span></th><th>Reason</th>
           </tr></thead>
           <tbody>{rows}</tbody>
         </table>
@@ -467,9 +467,6 @@ def _render_page(content: str, api_key: str = "") -> str:
       <label class="field-label" style="margin-top:12px">Average Cost Per Share ($)</label>
       <input id="as-cost" class="field-input" type="number" placeholder="150.00" min="0" step="any" />
 
-      <label class="field-label" style="margin-top:12px">Date Acquired</label>
-      <input id="as-date" class="field-input" type="date" />
-
       <div id="as-err" class="form-err"></div>
       <button class="run-btn" style="margin-top:20px;width:100%" onclick="doAddStock()">Add to Portfolio</button>
     </div>
@@ -502,11 +499,10 @@ def _render_page(content: str, api_key: str = "") -> str:
         </label>
 
         <div id="holdings-section" style="display:none">
-          <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;gap:6px;margin-bottom:6px">
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:6px;margin-bottom:6px">
             <span style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase">Ticker</span>
             <span style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase">Shares</span>
             <span style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase">Avg Cost</span>
-            <span style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase">Date</span>
             <span></span>
           </div>
           <div id="holdings-rows"></div>
@@ -537,7 +533,7 @@ def _render_page(content: str, api_key: str = "") -> str:
     .field-input:focus {{ border-color:#2563eb }}
     .form-err {{ color:#dc2626;font-size:13px;margin-top:8px;min-height:18px }}
     .holding-row {{
-      display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;
+      display:grid;grid-template-columns:1fr 1fr 1fr auto;
       gap:6px;margin-bottom:6px;align-items:center
     }}
     .holding-row input {{
@@ -624,7 +620,6 @@ def _render_page(content: str, api_key: str = "") -> str:
       document.getElementById('as-ticker').value = '';
       document.getElementById('as-shares').value = '';
       document.getElementById('as-cost').value = '';
-      document.getElementById('as-date').value = new Date().toISOString().slice(0,10);
       document.getElementById('as-err').textContent = '';
       document.getElementById('add-stock-overlay').style.display = 'block';
       document.body.style.overflow = 'hidden';
@@ -640,9 +635,9 @@ def _render_page(content: str, api_key: str = "") -> str:
       const ticker = document.getElementById('as-ticker').value.trim();
       const shares = document.getElementById('as-shares').value.trim();
       const cost   = document.getElementById('as-cost').value.trim();
-      const date   = document.getElementById('as-date').value.trim();
+      const date   = new Date().toISOString().slice(0, 10);
       const err    = document.getElementById('as-err');
-      if (!ticker || !shares || !cost || !date) {{ err.textContent = 'All fields are required.'; return; }}
+      if (!ticker || !shares || !cost) {{ err.textContent = 'All fields are required.'; return; }}
       err.textContent = '';
       try {{
         const res = await fetch(`/users/${{_addStockUserId}}/portfolio`, {{
@@ -697,14 +692,12 @@ def _render_page(content: str, api_key: str = "") -> str:
     }}
 
     function addHoldingRow() {{
-      const today = new Date().toISOString().slice(0,10);
       const row = document.createElement('div');
       row.className = 'holding-row';
       row.innerHTML = `
         <input placeholder="AAPL" style="text-transform:uppercase" oninput="this.value=this.value.toUpperCase()">
         <input type="number" placeholder="10" min="0.0001" step="any">
         <input type="number" placeholder="150.00" min="0" step="any">
-        <input type="date" value="${{today}}">
         <button class="del-btn" onclick="this.parentElement.remove()">✕</button>`;
       document.getElementById('holdings-rows').appendChild(row);
     }}
@@ -717,9 +710,9 @@ def _render_page(content: str, api_key: str = "") -> str:
       if (hasStocks) {{
         const rows = document.querySelectorAll('#holdings-rows .holding-row');
         for (const row of rows) {{
-          const [ticker, shares, cost, date] = [...row.querySelectorAll('input')].map(i => i.value.trim());
-          if (!ticker || !shares || !cost || !date) {{ err.textContent = 'Fill in all fields for each holding.'; return; }}
-          holdings.push({{ ticker, shares: parseFloat(shares), avg_cost_basis: parseFloat(cost), acquired_date: date }});
+          const [ticker, shares, cost] = [...row.querySelectorAll('input')].map(i => i.value.trim());
+          if (!ticker || !shares || !cost) {{ err.textContent = 'Fill in all fields for each holding.'; return; }}
+          holdings.push({{ ticker, shares: parseFloat(shares), avg_cost_basis: parseFloat(cost), acquired_date: new Date().toISOString().slice(0,10) }});
         }}
       }}
       try {{
