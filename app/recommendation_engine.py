@@ -319,6 +319,9 @@ def generate_recommendations(user_id: int) -> list[dict]:
             _compute_analyst_score(ticker, analyst_cache)
             _compute_earnings_score(ticker, earnings_cache)
 
+        if not all_tickers:
+            return []
+
         with ThreadPoolExecutor(max_workers=min(len(all_tickers), 2)) as ex:
             futures = {ex.submit(_prefetch_external, t): t for t in all_tickers}
             for f in as_completed(futures):

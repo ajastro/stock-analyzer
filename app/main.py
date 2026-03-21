@@ -37,10 +37,12 @@ def _require_dashboard_auth(credentials: HTTPBasicCredentials = Depends(_basic_a
 
 
 _BROWSER_PATHS = {"/", "/dashboard", "/healthz", "/docs", "/openapi.json", "/redoc"}
+_BROWSER_PREFIXES = ("/messaging/preview/",)
 
 def _require_api_key(request: Request):
     """Bearer token check for all API routes. Skips browser-facing paths."""
-    if request.url.path in _BROWSER_PATHS or not _API_SECRET_KEY:
+    path = request.url.path
+    if not _API_SECRET_KEY or path in _BROWSER_PATHS or any(path.startswith(p) for p in _BROWSER_PREFIXES):
         return
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer ") or not secrets.compare_digest(
@@ -130,10 +132,15 @@ async def dashboard():
             recs = []
             if ts:
                 recs = conn.execute(
-                    """SELECT * FROM recommendations
-                       WHERE user_id = ? AND generated_at = ?
-                       ORDER BY ABS(combined_score) DESC""",
-                    (user["id"], ts),
+                    """SELECT r.* FROM recommendations r
+                       WHERE r.user_id = ? AND r.generated_at = ?
+                       AND r.ticker IN (
+                           SELECT ticker FROM holdings WHERE user_id = ?
+                           UNION
+                           SELECT ticker FROM watchlist WHERE user_id = ?
+                       )
+                       ORDER BY ABS(r.combined_score) DESC""",
+                    (user["id"], ts, user["id"], user["id"]),
                 ).fetchall()
 
             holdings_count = conn.execute(
@@ -313,6 +320,7 @@ def _render_user_section(user_id: int, name: str, generated_at, recs, holdings_c
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="run-btn" style="background:#10b981" onclick="openAddStock({user_id})">+ Add Stock</button>
+          <button class="run-btn" style="background:#6b7280" onclick="openManageHoldings({user_id})">✎ Manage Holdings</button>
           <button class="run-btn" onclick="runDaily({user_id}, this)">▶ Run Analysis</button>
         </div>
       </div>
@@ -430,6 +438,18 @@ def _render_page(content: str, api_key: str = "") -> str:
   </div>
   <p class="footer">Scores: price momentum 20% · technical indicators 40% · news sentiment 40%</p>
 
+  <!-- Manage Holdings Modal -->
+  <div id="manage-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;overflow-y:auto;padding:20px">
+    <div style="background:white;border-radius:16px;max-width:480px;margin:40px auto;padding:24px;position:relative">
+      <button onclick="closeManageHoldings()" style="position:absolute;top:16px;right:16px;background:none;border:none;font-size:20px;cursor:pointer;color:#6b7280">✕</button>
+      <h2 style="margin-bottom:4px">Manage Holdings</h2>
+      <p class="muted" style="margin-bottom:20px">Remove stocks you have sold</p>
+      <div id="manage-list">
+        <p class="muted">Loading…</p>
+      </div>
+    </div>
+  </div>
+
   <!-- Add Stock Modal -->
   <div id="add-stock-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;overflow-y:auto;padding:20px">
     <div style="background:white;border-radius:16px;max-width:420px;margin:40px auto;padding:24px;position:relative">
@@ -538,6 +558,65 @@ def _render_page(content: str, api_key: str = "") -> str:
 
     let _newUserId = null;
     let _addStockUserId = null;
+
+    let _manageUserId = null;
+
+    async function openManageHoldings(userId) {{
+      _manageUserId = userId;
+      document.getElementById('manage-overlay').style.display = 'block';
+      document.body.style.overflow = 'hidden';
+      document.getElementById('manage-list').innerHTML = '<p class="muted">Loading…</p>';
+      try {{
+        const res = await fetch(`/users/${{userId}}/portfolio`, {{ headers: _authHeaders }});
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to load holdings');
+        if (!data.length) {{
+          document.getElementById('manage-list').innerHTML = '<p class="muted">No holdings found.</p>';
+          return;
+        }}
+        let rows = '';
+        for (const h of data) {{
+          rows += `
+          <div style="display:flex;align-items:center;justify-content:space-between;
+                      padding:10px 0;border-bottom:1px solid #f3f4f6">
+            <div>
+              <strong style="font-size:15px">${{h.ticker}}</strong>
+              <span class="muted" style="margin-left:8px">${{h.shares}} sh @ $${{h.avg_cost_basis.toFixed(2)}}</span>
+            </div>
+            <button onclick="removeHolding(${{h.id}}, '${{h.ticker}}')"
+                    style="background:#fee2e2;color:#dc2626;border:none;border-radius:6px;
+                           padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer">
+              Remove
+            </button>
+          </div>`;
+        }}
+        document.getElementById('manage-list').innerHTML = rows;
+      }} catch(e) {{
+        document.getElementById('manage-list').innerHTML = `<p style="color:#dc2626">${{e.message}}</p>`;
+      }}
+    }}
+
+    function closeManageHoldings() {{
+      document.getElementById('manage-overlay').style.display = 'none';
+      document.body.style.overflow = '';
+    }}
+
+    async function removeHolding(holdingId, ticker) {{
+      if (!confirm(`Remove ${{ticker}} from your portfolio?`)) return;
+      try {{
+        const res = await fetch(`/users/${{_manageUserId}}/portfolio/${{holdingId}}`, {{
+          method: 'DELETE', headers: _authHeaders
+        }});
+        if (!res.ok) {{
+          const data = await res.json();
+          throw new Error(data.detail || 'Failed to remove');
+        }}
+        showToast(`✅ ${{ticker}} removed`, 'ok');
+        setTimeout(() => location.reload(), 800);
+      }} catch(e) {{
+        showToast('❌ ' + e.message, 'err');
+      }}
+    }}
 
     function openAddStock(userId) {{
       _addStockUserId = userId;

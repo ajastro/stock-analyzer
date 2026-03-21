@@ -1,7 +1,9 @@
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import HTMLResponse
 
 from app.database import get_db
-from app.email_service import is_configured, send_email
+from app.email_service import format_morning_email, is_configured, send_email
+from app.recommendation_engine import generate_recommendations
 from app.schemas import MessageLogResponse
 
 router = APIRouter(prefix="/messaging", tags=["messaging"])
@@ -42,6 +44,22 @@ def messaging_status():
         "delivery": "email",
         "schedule": "8:30 AM ET, weekdays",
     }
+
+
+@router.get("/preview/{user_id}", response_class=HTMLResponse)
+def preview_email(user_id: int):
+    """Preview the email that would be sent for a user without actually sending it."""
+    with get_db() as conn:
+        user = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+    recs = generate_recommendations(user_id)
+    if not recs:
+        return HTMLResponse("<h2>No recommendations to preview — add holdings and run analysis first.</h2>")
+
+    _, html = format_morning_email(recs)
+    return HTMLResponse(html)
 
 
 @router.post("/test-email")

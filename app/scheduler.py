@@ -10,7 +10,7 @@ from app.recommendation_engine import generate_recommendations
 
 logger = logging.getLogger(__name__)
 
-ET = ZoneInfo("America/New_York")
+ET = ZoneInfo("America/Chicago")
 _scheduler = AsyncIOScheduler(timezone=ET)
 
 
@@ -63,12 +63,12 @@ async def _morning_report():
 def start_scheduler() -> None:
     _scheduler.add_job(
         _morning_report,
-        CronTrigger(day_of_week="mon-fri", hour=8, minute=30),
+        CronTrigger(day_of_week="mon-fri", hour=7, minute=30),
         id="morning_report",
         replace_existing=True,
     )
     _scheduler.start()
-    logger.info("Scheduler started — morning report runs at 8:30 AM ET on weekdays")
+    logger.info("Scheduler started — morning report runs at 7:30 AM CT on weekdays")
 
 
 def stop_scheduler() -> None:

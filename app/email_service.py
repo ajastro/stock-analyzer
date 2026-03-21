@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-ET = ZoneInfo("America/New_York")
+ET = ZoneInfo("America/Chicago")
 
 _BUY_SIGNALS = ("STRONG_BUY", "BUY")
 _SELL_SIGNALS = ("STRONG_SELL", "SELL")
@@ -34,8 +34,8 @@ def format_morning_email(recs: list[dict]) -> tuple[str, str]:
 
     Always sends — includes buy signals, sell signals, and a hold summary.
     """
-    date_str = datetime.now(ET).strftime("%B %d, %Y")
-    now_utc = datetime.utcnow().strftime("%H:%M UTC")
+    date_str = datetime.now(ET).strftime("%A, %B %d, %Y")
+    now_utc = datetime.now(ET).strftime("%I:%M %p CT")
 
     buys = [r for r in recs if r.get("signal") in _BUY_SIGNALS]
     sells = [r for r in recs if r.get("signal") in _SELL_SIGNALS]
@@ -62,7 +62,7 @@ def format_morning_email(recs: list[dict]) -> tuple[str, str]:
                    max-width:680px;margin:0 auto;padding:20px;color:#1f2937">
   <h2 style="margin-bottom:4px">Daily Report — {date_str}</h2>
   <p style="color:#6b7280;font-size:13px;margin-top:0">
-    Market opens 9:30 AM ET &nbsp;·&nbsp; Generated {now_utc}
+    Market opens 8:30 AM CT &nbsp;·&nbsp; Generated {now_utc}
   </p>
   {buy_section}
   {sell_section}
