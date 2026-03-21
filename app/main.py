@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from app.database import init_db
@@ -82,6 +82,11 @@ app.include_router(sentiment.router)
 app.include_router(recommendations.router)
 app.include_router(messaging.router)
 app.include_router(run_daily.router)
+
+
+@app.get("/", dependencies=[])
+async def root():
+    return RedirectResponse(url="/dashboard")
 
 
 @app.get("/healthz", dependencies=[])  # public — Railway uses this for health checks
