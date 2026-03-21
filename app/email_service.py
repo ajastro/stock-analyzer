@@ -5,37 +5,43 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from zoneinfo import ZoneInfo
 
-SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
-SMTP_USER = os.environ.get("SMTP_USER", "")
-SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
-ALERT_EMAIL = os.environ.get("ALERT_EMAIL", "")
-
 ET = ZoneInfo("America/New_York")
 
 _BUY_SIGNALS = ("STRONG_BUY", "BUY")
 _SELL_SIGNALS = ("STRONG_SELL", "SELL")
 
 
+def _smtp_config() -> dict:
+    return {
+        "host": os.environ.get("SMTP_HOST", "smtp.gmail.com"),
+        "port": int(os.environ.get("SMTP_PORT", "587")),
+        "user": os.environ.get("SMTP_USER", ""),
+        "password": os.environ.get("SMTP_PASSWORD", ""),
+        "alert_email": os.environ.get("ALERT_EMAIL", ""),
+    }
+
+
 def is_configured() -> bool:
-    return bool(SMTP_USER and SMTP_PASSWORD and (ALERT_EMAIL or SMTP_USER))
+    c = _smtp_config()
+    return bool(c["user"] and c["password"] and (c["alert_email"] or c["user"]))
 
 
 def send_email(subject: str, html_body: str) -> None:
+    c = _smtp_config()
     if not is_configured():
         raise RuntimeError(
             "Email not configured. Set SMTP_USER, SMTP_PASSWORD, and ALERT_EMAIL."
         )
-    to_addr = ALERT_EMAIL or SMTP_USER
+    to_addr = c["alert_email"] or c["user"]
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"] = SMTP_USER
+    msg["From"] = c["user"]
     msg["To"] = to_addr
     msg.attach(MIMEText(html_body, "html"))
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+    with smtplib.SMTP(c["host"], c["port"]) as server:
         server.starttls()
-        server.login(SMTP_USER, SMTP_PASSWORD)
-        server.sendmail(SMTP_USER, to_addr, msg.as_string())
+        server.login(c["user"], c["password"])
+        server.sendmail(c["user"], to_addr, msg.as_string())
 
 
 def format_morning_email(recs: list[dict]) -> tuple[str, str]:
