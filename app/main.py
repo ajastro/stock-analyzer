@@ -342,6 +342,7 @@ def _render_user_section(user_id: int, name: str, generated_at, recs, holdings_c
           <button class="btn-ghost" onclick="openAddStock({user_id})">+ Add Stock</button>
           <button class="btn-ghost" onclick="openImport({user_id})">&#8679; Import</button>
           <button class="btn-ghost" onclick="openManageHoldings({user_id})">Holdings</button>
+          <button class="btn-ghost" onclick="openWatchlist({user_id})">Watchlist</button>
           <button class="btn-primary" onclick="runDaily({user_id}, this)">&#9654; Run Analysis</button>
           <button class="btn-ghost" onclick="sendEmail({user_id}, this)">&#9993; Send Email</button>
         </div>
@@ -955,6 +956,26 @@ def _render_page(content: str, api_key: str = "") -> str:
     </div>
   </div>
 
+  <!-- Watchlist Modal -->
+  <div id="watchlist-overlay" class="modal-backdrop">
+    <div class="modal-box" style="max-width:500px">
+      <button class="modal-close" onclick="closeWatchlist()">&#x2715;</button>
+      <h2>Watchlist</h2>
+      <p class="muted" style="margin-bottom:16px">Stocks you want to monitor but don't own yet. Buy signals on these appear in your daily email.</p>
+
+      <div style="display:flex;gap:8px;margin-bottom:18px">
+        <input id="wl-ticker" class="field-input" placeholder="AAPL" style="text-transform:uppercase;flex:1"
+               oninput="this.value=this.value.toUpperCase()" onkeydown="if(event.key==='Enter')addToWatchlist()">
+        <button class="btn-primary" style="padding:10px 16px;white-space:nowrap" onclick="addToWatchlist()">+ Add</button>
+      </div>
+      <div id="wl-err" class="form-err" style="margin-top:-10px;margin-bottom:8px"></div>
+
+      <div id="watchlist-list">
+        <p class="muted">Loading&hellip;</p>
+      </div>
+    </div>
+  </div>
+
   <!-- Add Stock Modal -->
   <div id="add-stock-overlay" class="modal-backdrop">
     <div class="modal-box" style="max-width:440px">
@@ -1273,6 +1294,78 @@ def _render_page(content: str, api_key: str = "") -> str:
         showToast('❌ ' + e.message, 'err');
         btn.disabled = false;
         btn.textContent = '\u25b6 Run Analysis';
+      }}
+    }}
+
+    let _watchlistUserId = null;
+
+    async function openWatchlist(userId) {{
+      _watchlistUserId = userId;
+      document.getElementById('wl-ticker').value = '';
+      document.getElementById('wl-err').textContent = '';
+      document.getElementById('watchlist-overlay').style.display = 'block';
+      document.body.style.overflow = 'hidden';
+      await refreshWatchlistUI();
+    }}
+    function closeWatchlist() {{
+      document.getElementById('watchlist-overlay').style.display = 'none';
+      document.body.style.overflow = '';
+    }}
+    async function refreshWatchlistUI() {{
+      document.getElementById('watchlist-list').innerHTML = '<p class="muted">Loading\u2026</p>';
+      try {{
+        const res = await fetch(`/stocks/users/${{_watchlistUserId}}/watchlist`, {{ headers: _authHeaders }});
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to load watchlist');
+        if (!data.length) {{
+          document.getElementById('watchlist-list').innerHTML = '<p class="muted">No watchlist stocks yet \u2014 add one above.</p>';
+          return;
+        }}
+        let rows = '';
+        for (const w of data) {{
+          rows += `
+          <div class="manage-holding-row">
+            <strong style="font-size:15px;color:var(--text)">${{w.ticker}}</strong>
+            <button class="manage-remove-btn" onclick="removeFromWatchlist('${{w.ticker}}')">Remove</button>
+          </div>`;
+        }}
+        document.getElementById('watchlist-list').innerHTML = rows;
+      }} catch(e) {{
+        document.getElementById('watchlist-list').innerHTML = `<p style="color:#f87171">${{e.message}}</p>`;
+      }}
+    }}
+    async function addToWatchlist() {{
+      const ticker = document.getElementById('wl-ticker').value.trim().toUpperCase();
+      const err = document.getElementById('wl-err');
+      if (!ticker) {{ err.textContent = 'Enter a ticker symbol.'; return; }}
+      err.textContent = '';
+      try {{
+        const res = await fetch(`/stocks/users/${{_watchlistUserId}}/watchlist/${{ticker}}`, {{
+          method: 'POST', headers: _authHeaders
+        }});
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to add');
+        document.getElementById('wl-ticker').value = '';
+        await refreshWatchlistUI();
+        showToast(`\u2705 ${{ticker}} added to watchlist`, 'ok');
+      }} catch(e) {{
+        err.textContent = '\u274c ' + e.message;
+      }}
+    }}
+    async function removeFromWatchlist(ticker) {{
+      if (!confirm(`Remove ${{ticker}} from watchlist?`)) return;
+      try {{
+        const res = await fetch(`/stocks/users/${{_watchlistUserId}}/watchlist/${{ticker}}`, {{
+          method: 'DELETE', headers: _authHeaders
+        }});
+        if (!res.ok) {{
+          const data = await res.json();
+          throw new Error(data.detail || 'Failed to remove');
+        }}
+        await refreshWatchlistUI();
+        showToast(`${{ticker}} removed from watchlist`, 'ok');
+      }} catch(e) {{
+        showToast('\u274c ' + e.message, 'err');
       }}
     }}
 

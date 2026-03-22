@@ -169,5 +169,23 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_message_log_user
                 ON message_log(user_id, sent_at);
+
+            CREATE TABLE IF NOT EXISTS screener_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker TEXT NOT NULL,
+                signal TEXT NOT NULL,
+                combined_score REAL NOT NULL,
+                price_score REAL,
+                technical_score REAL,
+                sentiment_score REAL,
+                analyst_score REAL,
+                earnings_score REAL,
+                current_price REAL,
+                reason TEXT,
+                analyzed_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_screener_results_ticker
+                ON screener_results(ticker, analyzed_at);
         """)
         _run_migrations(conn)

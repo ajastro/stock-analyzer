@@ -8,3 +8,4 @@ APScheduler==3.11.2
 httpx==0.28.1
 resend==2.26.0
 openpyxl==3.1.5
+lxml==5.3.0

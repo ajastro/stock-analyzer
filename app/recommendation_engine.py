@@ -264,6 +264,56 @@ def _signal_from_score(score: float) -> str:
     return "HOLD"
 
 
+def score_ticker_standalone(
+    ticker: str,
+    quote_cache: dict,
+    candle_cache: dict,
+    analyst_cache: dict,
+    earnings_cache: dict,
+    conn,
+) -> dict | None:
+    """
+    Run the full 5-component scoring on a ticker without any user-specific data
+    (no P&L, no stop-loss, no affordable shares). Used by the deep screener.
+    Does NOT refresh sentiment — uses cached news_articles data to avoid DB lock conflicts.
+    Returns a dict with all scores and signal, or None if no price data.
+    """
+
+    price_score, current_price, price_reason = _compute_price_score(ticker, conn, quote_cache)
+    if not current_price:
+        return None
+
+    tech_score, tech_reason   = _compute_technical_score(ticker, candle_cache)
+    sent_score, sent_reason   = _compute_sentiment_score(ticker, conn)
+    analyst_score, anal_reason = _compute_analyst_score(ticker, analyst_cache)
+    earn_score, earn_reason   = _compute_earnings_score(ticker, earnings_cache)
+
+    combined = (
+        PRICE_WEIGHT     * price_score +
+        TECHNICAL_WEIGHT * tech_score +
+        SENTIMENT_WEIGHT * sent_score +
+        ANALYST_WEIGHT   * analyst_score +
+        EARNINGS_WEIGHT  * earn_score
+    )
+    combined = round(combined, 4)
+    signal   = _signal_from_score(combined)
+
+    reason = " | ".join(filter(None, [price_reason, tech_reason, sent_reason, anal_reason, earn_reason]))
+
+    return {
+        "ticker":          ticker,
+        "signal":          signal,
+        "combined_score":  combined,
+        "price_score":     round(price_score, 4),
+        "technical_score": round(tech_score, 4),
+        "sentiment_score": round(sent_score, 4),
+        "analyst_score":   round(analyst_score, 4),
+        "earnings_score":  round(earn_score, 4),
+        "current_price":   current_price,
+        "reason":          reason,
+    }
+
+
 def generate_recommendations(user_id: int) -> list[dict]:
     with get_db() as conn:
         user = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()

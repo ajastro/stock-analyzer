@@ -7,6 +7,7 @@ from apscheduler.triggers.cron import CronTrigger
 from app.database import get_db
 from app.email_service import format_morning_email, is_configured, send_email
 from app.recommendation_engine import generate_recommendations
+from app.screener import get_cached_results, run_deep_screener
 from app.weekly_report import format_weekly_email, generate_weekly_data
 
 logger = logging.getLogger(__name__)
@@ -36,7 +37,20 @@ async def _morning_report():
         user_id = user["id"]
         try:
             recs = generate_recommendations(user_id)
-            subject, html = format_morning_email(recs)
+            with get_db() as conn:
+                holdings_tickers = {
+                    r["ticker"] for r in conn.execute(
+                        "SELECT DISTINCT ticker FROM holdings WHERE user_id = ?", (user_id,)
+                    ).fetchall()
+                }
+                watchlist_tickers = {
+                    r["ticker"] for r in conn.execute(
+                        "SELECT DISTINCT ticker FROM watchlist WHERE user_id = ?", (user_id,)
+                    ).fetchall()
+                }
+            exclude = holdings_tickers | watchlist_tickers
+            screener_results = get_cached_results(exclude_tickers=exclude)
+            subject, html = format_morning_email(recs, holdings_tickers, screener_results)
             send_email(subject, html)
 
             with get_db() as conn:
@@ -107,7 +121,22 @@ async def _weekly_report():
                 pass
 
 
+async def _deep_screener_job():
+    """Run the full S&P 500 deep screener and store results in DB."""
+    import asyncio
+    logger.info("Running deep screener job")
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, run_deep_screener)
+    logger.info("Deep screener job complete")
+
+
 def start_scheduler() -> None:
+    _scheduler.add_job(
+        _deep_screener_job,
+        CronTrigger(day_of_week="mon-fri", hour=6, minute=0),
+        id="deep_screener",
+        replace_existing=True,
+    )
     _scheduler.add_job(
         _morning_report,
         CronTrigger(day_of_week="mon-fri", hour=7, minute=30),
@@ -121,7 +150,7 @@ def start_scheduler() -> None:
         replace_existing=True,
     )
     _scheduler.start()
-    logger.info("Scheduler started — daily 7:30 AM CT weekdays, weekly 11:00 AM CT Sundays")
+    logger.info("Scheduler started — deep screener 6:00 AM, daily report 7:30 AM CT weekdays, weekly 11:00 AM CT Sundays")
 
 
 def stop_scheduler() -> None:

@@ -5,6 +5,7 @@ from app.database import get_db
 from app.email_service import format_morning_email, is_configured, send_email
 from app.recommendation_engine import generate_recommendations
 from app.schemas import MessageLogResponse
+from app.screener import get_cached_results, run_deep_screener
 from app.weekly_report import format_weekly_email, generate_weekly_data
 
 router = APIRouter(prefix="/messaging", tags=["messaging"])
@@ -59,7 +60,8 @@ def preview_email(user_id: int):
     if not recs:
         return HTMLResponse("<h2>No recommendations to preview — add holdings and run analysis first.</h2>")
 
-    _, html = format_morning_email(recs)
+    holdings_tickers, screener_results = _get_screener_data(user_id)
+    _, html = format_morning_email(recs, holdings_tickers, screener_results)
     return HTMLResponse(html)
 
 
@@ -78,7 +80,8 @@ def send_report(user_id: int):
     if not recs:
         raise HTTPException(status_code=400, detail="No recommendations to send. Run analysis first.")
 
-    subject, html = format_morning_email(recs)
+    holdings_tickers, screener_results = _get_screener_data(user_id)
+    subject, html = format_morning_email(recs, holdings_tickers, screener_results)
     try:
         send_email(subject, html)
         with get_db() as conn:
@@ -138,6 +141,37 @@ def preview_weekly(user_id: int):
 
     _, html = format_weekly_email(data)
     return HTMLResponse(html)
+
+
+def _get_screener_data(user_id: int) -> tuple[set[str], list[dict]]:
+    """Returns (holdings_tickers, screener_results) for a user."""
+    with get_db() as conn:
+        holdings_tickers = {
+            r["ticker"] for r in conn.execute(
+                "SELECT DISTINCT ticker FROM holdings WHERE user_id = ?", (user_id,)
+            ).fetchall()
+        }
+        watchlist_tickers = {
+            r["ticker"] for r in conn.execute(
+                "SELECT DISTINCT ticker FROM watchlist WHERE user_id = ?", (user_id,)
+            ).fetchall()
+        }
+    exclude = holdings_tickers | watchlist_tickers
+    screener_results = get_cached_results(exclude_tickers=exclude)
+    return holdings_tickers, screener_results
+
+
+@router.post("/warm-screener")
+async def warm_screener_endpoint():
+    """
+    Manually trigger the deep screener (normally runs at 6 AM CT via scheduler).
+    Runs the full 5-component analysis on all S&P 500 stocks and stores results in DB.
+    Takes ~7 minutes to complete.
+    """
+    import asyncio
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, run_deep_screener)
+    return {"status": "ok", "message": "Deep screener complete — results stored in DB and ready for the next email."}
 
 
 @router.post("/trigger-weekly-report")

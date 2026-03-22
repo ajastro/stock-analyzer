@@ -29,33 +29,53 @@ def send_email(subject: str, html_body: str) -> None:
     })
 
 
-def format_morning_email(recs: list[dict]) -> tuple[str, str]:
+def format_morning_email(
+    recs: list[dict],
+    holdings_tickers: set[str] | None = None,
+    screener_results: list[dict] | None = None,
+) -> tuple[str, str]:
     """Returns (subject, html_body) for the daily morning report.
 
-    Always sends — includes buy signals, sell signals, and a hold summary.
+    Always sends — includes buy signals, sell signals, hold summary,
+    and a watchlist opportunities section for non-owned buy signals.
     """
     date_str = datetime.now(ET).strftime("%A, %B %d, %Y")
     now_utc = datetime.now(ET).strftime("%I:%M %p CT")
 
-    buys = [r for r in recs if r.get("signal") in _BUY_SIGNALS]
-    sells = [r for r in recs if r.get("signal") in _SELL_SIGNALS]
-    holds = [r for r in recs if r.get("signal") == "HOLD"]
+    # Split into portfolio vs watchlist if holdings_tickers provided
+    if holdings_tickers is not None:
+        portfolio_recs  = [r for r in recs if r.get("ticker") in holdings_tickers]
+        watchlist_recs  = [r for r in recs if r.get("ticker") not in holdings_tickers]
+    else:
+        portfolio_recs  = recs
+        watchlist_recs  = []
 
-    buy_count = len(buys)
+    buys  = [r for r in portfolio_recs if r.get("signal") in _BUY_SIGNALS]
+    sells = [r for r in portfolio_recs if r.get("signal") in _SELL_SIGNALS]
+    holds = [r for r in portfolio_recs if r.get("signal") == "HOLD"]
+
+    watchlist_buys = [r for r in watchlist_recs if r.get("signal") in _BUY_SIGNALS]
+
+    buy_count  = len(buys)
     sell_count = len(sells)
+    wl_count   = len(watchlist_buys)
 
-    if buy_count == 0 and sell_count == 0:
+    if buy_count == 0 and sell_count == 0 and wl_count == 0:
         subject = f"Stock Analyzer — No Action Needed ({date_str})"
     elif buy_count > 0 and sell_count > 0:
         subject = f"Stock Analyzer — {buy_count} Buy, {sell_count} Sell ({date_str})"
     elif buy_count > 0:
         subject = f"Stock Analyzer — {buy_count} Buy Signal{'s' if buy_count > 1 else ''} ({date_str})"
-    else:
+    elif sell_count > 0:
         subject = f"Stock Analyzer — {sell_count} Sell Alert{'s' if sell_count > 1 else ''} ({date_str})"
+    else:
+        subject = f"Stock Analyzer — {wl_count} Watchlist Opportunit{'ies' if wl_count > 1 else 'y'} ({date_str})"
 
-    buy_section = _render_buy_section(buys)
-    sell_section = _render_sell_section(sells)
-    hold_section = _render_hold_summary(holds)
+    buy_section       = _render_buy_section(buys)
+    sell_section      = _render_sell_section(sells)
+    hold_section      = _render_hold_summary(holds)
+    watchlist_section = _render_watchlist_section(watchlist_buys)
+    discover_section  = _render_discover_section(screener_results or [])
 
     html = f"""<!DOCTYPE html>
 <html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
@@ -67,9 +87,12 @@ def format_morning_email(recs: list[dict]) -> tuple[str, str]:
   {buy_section}
   {sell_section}
   {hold_section}
+  {watchlist_section}
+  {discover_section}
   <p style="color:#9ca3af;font-size:11px;margin-top:32px;border-top:1px solid #e5e7eb;padding-top:12px">
-    Not financial advice. Scores combine price momentum (20%), technical indicators (40%),
-    and news sentiment (40%).
+    Not financial advice. Scores combine price momentum (15%), technical indicators (30%),
+    news sentiment (25%), analyst consensus (20%), and earnings (10%).
+    Discover section uses lightweight screening (price momentum + cached sentiment only).
   </p>
 </body></html>"""
 
@@ -178,6 +201,88 @@ def _render_hold_summary(holds: list[dict]) -> str:
     <div style="background:#f9fafb;border-radius:6px;padding:10px 14px;margin:16px 0;
                 font-size:13px;color:#6b7280">
       <strong>Holding ({len(holds)}):</strong> {tickers}
+    </div>"""
+
+
+def _render_watchlist_section(buys: list[dict]) -> str:
+    if not buys:
+        return ""
+
+    rows = ""
+    for r in buys:
+        is_strong = r.get("signal") == "STRONG_BUY"
+        badge     = "#16a34a" if is_strong else "#22c55e"
+        price     = f"${r['current_price']:.2f}" if r.get("current_price") else "—"
+        score     = f"{r['combined_score']:+.3f}"
+        affordable = f"{r['affordable_shares']:.2f} shares" if r.get("affordable_shares") else "—"
+        rows += f"""
+        <tr>
+          <td style="{_td}font-weight:600;font-size:15px">{r['ticker']}</td>
+          <td style="{_td}">
+            <span style="background:{badge};color:white;padding:3px 8px;border-radius:4px;
+                         font-size:11px;font-weight:600">{r['signal'].replace('_', ' ')}</span>
+          </td>
+          <td style="{_td}">{price}</td>
+          <td style="{_td};font-family:monospace">{score}</td>
+          <td style="{_td}">{affordable}</td>
+        </tr>"""
+
+    return f"""
+    <div style="margin:16px 0">
+      <h3 style="color:#1d4ed8;margin-bottom:4px">Watchlist Opportunities</h3>
+      <p style="font-size:12px;color:#6b7280;margin:0 0 8px">
+        These are stocks on your watchlist (not yet owned) with buy signals today.
+      </p>
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="background:#eff6ff">
+          <th style="{_th}">Ticker</th>
+          <th style="{_th}">Signal</th>
+          <th style="{_th}">Price</th>
+          <th style="{_th}">Score</th>
+          <th style="{_th}">Affordable ($100)</th>
+        </tr></thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </div>"""
+
+
+def _render_discover_section(candidates: list[dict]) -> str:
+    if not candidates:
+        return ""
+
+    rows = ""
+    for c in candidates:
+        is_strong = c.get("signal") == "STRONG_BUY"
+        badge     = "#16a34a" if is_strong else "#22c55e"
+        price     = f"${c['current_price']:.2f}" if c.get("current_price") else "—"
+        score_str = f"{c['combined_score']:+.3f}"
+        rows += f"""
+        <tr>
+          <td style="{_td}font-weight:600;font-size:15px">{c['ticker']}</td>
+          <td style="{_td}">
+            <span style="background:{badge};color:white;padding:3px 8px;border-radius:4px;
+                         font-size:11px;font-weight:600">{c['signal'].replace('_', ' ')}</span>
+          </td>
+          <td style="{_td}">{price}</td>
+          <td style="{_td};font-family:monospace">{score_str}</td>
+        </tr>"""
+
+    return f"""
+    <div style="margin:16px 0">
+      <h3 style="color:#7c3aed;margin-bottom:4px">Discover — Today's Opportunities</h3>
+      <p style="font-size:12px;color:#6b7280;margin:0 0 8px">
+        Top picks from the S&P 500 that you don't currently own or watch.
+        Full analysis run at 6 AM CT — same scoring as your portfolio.
+      </p>
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="background:#f5f3ff">
+          <th style="{_th}">Ticker</th>
+          <th style="{_th}">Signal</th>
+          <th style="{_th}">Price</th>
+          <th style="{_th}">Score</th>
+        </tr></thead>
+        <tbody>{rows}</tbody>
+      </table>
     </div>"""
 
 
