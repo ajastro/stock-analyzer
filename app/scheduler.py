@@ -7,6 +7,7 @@ from apscheduler.triggers.cron import CronTrigger
 from app.database import get_db
 from app.email_service import format_morning_email, is_configured, send_email
 from app.recommendation_engine import generate_recommendations
+from app.weekly_report import format_weekly_email, generate_weekly_data
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,52 @@ async def _morning_report():
                 pass
 
 
+async def _weekly_report():
+    """Generate and send the weekly report for all onboarded users."""
+    logger.info("Running weekly report job")
+
+    with get_db() as conn:
+        users = conn.execute(
+            "SELECT id FROM users WHERE is_onboarded = 1"
+        ).fetchall()
+
+    if not users:
+        logger.info("No onboarded users — skipping weekly report")
+        return
+
+    if not is_configured():
+        logger.warning("Email not configured — skipping weekly report send")
+        return
+
+    for user in users:
+        user_id = user["id"]
+        try:
+            data = generate_weekly_data(user_id)
+            if not data:
+                continue
+            subject, html = format_weekly_email(data)
+            send_email(subject, html)
+
+            with get_db() as conn:
+                conn.execute(
+                    """INSERT INTO message_log (user_id, message_type, status, body)
+                       VALUES (?, ?, ?, ?)""",
+                    (user_id, "weekly_email", "sent", subject),
+                )
+            logger.info(f"User {user_id}: weekly report sent")
+        except Exception as e:
+            logger.error(f"User {user_id}: weekly report failed — {e}")
+            try:
+                with get_db() as conn:
+                    conn.execute(
+                        """INSERT INTO message_log (user_id, message_type, status, error)
+                           VALUES (?, ?, ?, ?)""",
+                        (user_id, "weekly_email", "failed", str(e)),
+                    )
+            except Exception:
+                pass
+
+
 def start_scheduler() -> None:
     _scheduler.add_job(
         _morning_report,
@@ -67,8 +114,14 @@ def start_scheduler() -> None:
         id="morning_report",
         replace_existing=True,
     )
+    _scheduler.add_job(
+        _weekly_report,
+        CronTrigger(day_of_week="sun", hour=11, minute=0),
+        id="weekly_report",
+        replace_existing=True,
+    )
     _scheduler.start()
-    logger.info("Scheduler started — morning report runs at 7:30 AM CT on weekdays")
+    logger.info("Scheduler started — daily 7:30 AM CT weekdays, weekly 11:00 AM CT Sundays")
 
 
 def stop_scheduler() -> None:

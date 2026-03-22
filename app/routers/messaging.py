@@ -5,6 +5,7 @@ from app.database import get_db
 from app.email_service import format_morning_email, is_configured, send_email
 from app.recommendation_engine import generate_recommendations
 from app.schemas import MessageLogResponse
+from app.weekly_report import format_weekly_email, generate_weekly_data
 
 router = APIRouter(prefix="/messaging", tags=["messaging"])
 
@@ -113,3 +114,35 @@ def test_email():
         return {"status": "sent", "message": "Test email sent successfully — check your inbox."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Email failed: {e}")
+
+
+@router.post("/trigger-morning-report")
+async def trigger_morning_report():
+    """Manually trigger the morning report job right now (for testing the scheduler logic)."""
+    from app.scheduler import _morning_report
+    await _morning_report()
+    return {"status": "ok", "message": "Morning report job ran — check your inbox and /messaging/log."}
+
+
+@router.get("/preview-weekly/{user_id}", response_class=HTMLResponse)
+def preview_weekly(user_id: int):
+    """Preview the weekly report email in the browser without sending it."""
+    with get_db() as conn:
+        user = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+    data = generate_weekly_data(user_id)
+    if not data:
+        return HTMLResponse("<h2>No data available — add holdings and run analysis first.</h2>")
+
+    _, html = format_weekly_email(data)
+    return HTMLResponse(html)
+
+
+@router.post("/trigger-weekly-report")
+async def trigger_weekly_report():
+    """Manually trigger the weekly report job right now (for testing)."""
+    from app.scheduler import _weekly_report
+    await _weekly_report()
+    return {"status": "ok", "message": "Weekly report job ran — check your inbox and /messaging/log."}
