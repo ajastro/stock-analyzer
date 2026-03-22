@@ -45,7 +45,7 @@ async def _morning_report():
                        VALUES (?, ?, ?, ?)""",
                     (user_id, "morning_email", "sent", subject),
                 )
-            logger.info(f"User {user_id}: morning email sent ({len(actionable)} signals)")
+            logger.info(f"User {user_id}: morning email sent ({len(recs)} recs)")
         except Exception as e:
             logger.error(f"User {user_id}: morning report failed — {e}")
             try:

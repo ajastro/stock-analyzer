@@ -229,11 +229,11 @@ def _plain_summary(rec) -> str:
 
 
 _SIGNAL_META = {
-    "STRONG_BUY":  {"color": "#16a34a", "bg": "#f0fdf4", "emoji": "🚀"},
-    "BUY":         {"color": "#22c55e", "bg": "#f0fdf4", "emoji": "📈"},
-    "HOLD":        {"color": "#d97706", "bg": "#fffbeb", "emoji": "⏸️"},
-    "SELL":        {"color": "#ef4444", "bg": "#fef2f2", "emoji": "📉"},
-    "STRONG_SELL": {"color": "#dc2626", "bg": "#fef2f2", "emoji": "🔴"},
+    "STRONG_BUY":  {"badge_cls": "badge-strong-buy"},
+    "BUY":         {"badge_cls": "badge-buy"},
+    "HOLD":        {"badge_cls": "badge-hold"},
+    "SELL":        {"badge_cls": "badge-sell"},
+    "STRONG_SELL": {"badge_cls": "badge-strong-sell"},
 }
 
 
@@ -246,10 +246,10 @@ def _render_user_section(user_id: int, name: str, generated_at, recs, holdings_c
 
     summary_pills = f"""
     <div class="pill-row">
-      <span class="pill pill-buy">🚀 {len(buys)} Buy</span>
-      <span class="pill pill-sell">📉 {len(sells)} Sell</span>
-      <span class="pill pill-hold">⏸️ {len(holds)} Hold</span>
-      <span class="pill pill-neutral">🗂️ {holdings_count} Holdings</span>
+      <span class="pill pill-buy"><span class="pdot pdot-buy"></span>{len(buys)} Buy</span>
+      <span class="pill pill-sell"><span class="pdot pdot-sell"></span>{len(sells)} Sell</span>
+      <span class="pill pill-hold"><span class="pdot pdot-hold"></span>{len(holds)} Hold</span>
+      <span class="pill pill-neutral">{holdings_count} Holdings</span>
     </div>"""
 
     broken_tickers = [
@@ -257,8 +257,7 @@ def _render_user_section(user_id: int, name: str, generated_at, recs, holdings_c
         if (r["technical_score"] or 0) == 0 and "Insufficient historical data" in (r["reason"] or "")
     ]
     data_warning = f"""
-    <div style="background:#fef3c7;border-left:4px solid #f59e0b;border-radius:6px;
-                padding:10px 14px;margin-bottom:12px;font-size:13px;color:#92400e">
+    <div class="data-warning">
       ⚠️ <strong>Price history unavailable for: {', '.join(broken_tickers)}</strong> —
       yfinance may be down or rate-limiting. Technical analysis (30% of score) was skipped for these tickers.
       Signals are based on sentiment and analyst data only.
@@ -267,17 +266,26 @@ def _render_user_section(user_id: int, name: str, generated_at, recs, holdings_c
     if not recs:
         body = f"""
         {summary_pills}
-        <p class="muted" style="margin-top:12px">No recommendations yet — run the analysis below.</p>"""
+        <p class="muted" style="margin-top:14px">No recommendations yet — run the analysis below.</p>"""
     else:
         rows = ""
         for r in recs:
-            meta = _SIGNAL_META.get(r["signal"], {"color": "#6b7280", "bg": "#f9fafb", "emoji": ""})
+            meta = _SIGNAL_META.get(r["signal"], {"badge_cls": ""})
             price = f"${r['current_price']:.2f}" if r["current_price"] else "—"
-            score = f"{r['combined_score']:+.3f}"
+
+            # Score bar: map combined_score from [-1,+1] to a coloured bar
+            raw_score = r["combined_score"] or 0
+            score_label = f"{raw_score:+.3f}"
+            bar_pct = int(min(abs(raw_score), 1.0) * 100)
+            bar_color = "#22c55e" if raw_score >= 0 else "#ef4444"
 
             gl = r["unrealized_gain_loss"]
-            gl_str = f"${gl:+.2f}" if gl is not None else "—"
-            gl_color = "#16a34a" if (gl or 0) >= 0 else "#dc2626"
+            if gl is None:
+                gl_str, gl_cls = "—", "pl-neutral"
+            elif gl >= 0:
+                gl_str, gl_cls = f"${gl:+.2f}", "pl-positive"
+            else:
+                gl_str, gl_cls = f"${gl:+.2f}", "pl-negative"
 
             affordable = f"{r['affordable_shares']:.2f} sh" if r["affordable_shares"] else "—"
 
@@ -285,44 +293,57 @@ def _render_user_section(user_id: int, name: str, generated_at, recs, holdings_c
 
             rows += f"""
             <tr class="rec-row" data-reason="{r['reason'] or ''}">
-              <td><strong style="font-size:15px">{r['ticker']}</strong></td>
+              <td class="ticker-cell">{r['ticker']}</td>
               <td>
-                <span class="badge" style="background:{meta['color']}">{meta['emoji']} {r['signal'].replace('_', ' ')}</span>
+                <span class="badge {meta['badge_cls']}"><span class="badge-dot"></span>{r['signal'].replace('_', ' ')}</span>
               </td>
-              <td>{price}</td>
-              <td style="font-family:monospace;font-size:13px">{score}</td>
-              <td style="color:{gl_color};font-weight:600">{gl_str}</td>
-              <td style="color:#2563eb">{affordable}</td>
+              <td style="font-variant-numeric:tabular-nums;white-space:nowrap">{price}</td>
+              <td>
+                <div class="score-wrap">
+                  <div class="score-bar-bg">
+                    <div class="score-bar-fill" style="width:{bar_pct}%;background:{bar_color}"></div>
+                  </div>
+                  <span class="score-num">{score_label}</span>
+                </div>
+              </td>
+              <td class="{gl_cls}">{gl_str}</td>
+              <td class="affordable-cell">{affordable}</td>
               <td class="reason-cell">{reason_short}</td>
             </tr>"""
 
         body = f"""
         {summary_pills}
         {data_warning}
-        <div style="overflow-x:auto;margin-top:12px">
+        <div class="table-wrap">
         <table>
           <thead><tr>
             <th>Ticker</th><th>Signal</th><th>Price</th>
-            <th>Score</th><th>P&amp;L</th><th>Affordable<br><span style="font-weight:400;color:#9ca3af;text-transform:none;font-size:10px">based on $100/day budget</span></th><th>Reason</th>
+            <th>Score</th><th>P&amp;L</th>
+            <th>Affordable<br><span style="font-weight:400;color:#4b5563;text-transform:none;font-size:10px;letter-spacing:0">$100/day budget</span></th>
+            <th>Reason</th>
           </tr></thead>
           <tbody>{rows}</tbody>
         </table>
         </div>"""
 
-    ts_label = f'<span class="muted" style="font-size:12px">Last run: {ts_str}</span>' if ts_str else '<span class="muted" style="font-size:12px">Never run</span>'
+    if ts_str:
+        ts_label = f'<span class="ts-label"><span class="ts-dot"></span>Last run: {ts_str}</span>'
+    else:
+        ts_label = '<span class="ts-label" style="color:#4b5563">Never run</span>'
 
     return f"""
     <div class="card">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+      <div class="card-header">
         <div>
-          <h2 style="font-size:18px">{name}</h2>
+          <h2>{name}</h2>
           {ts_label}
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="run-btn" style="background:#10b981" onclick="openAddStock({user_id})">+ Add Stock</button>
-          <button class="run-btn" style="background:#6b7280" onclick="openManageHoldings({user_id})">✎ Manage Holdings</button>
-          <button class="run-btn" onclick="runDaily({user_id}, this)">▶ Run Analysis</button>
-          <button class="run-btn" style="background:#7c3aed" onclick="sendEmail({user_id}, this)">✉ Send Email</button>
+        <div class="card-actions">
+          <button class="btn-ghost" onclick="openAddStock({user_id})">+ Add Stock</button>
+          <button class="btn-ghost" onclick="openImport({user_id})">&#8679; Import</button>
+          <button class="btn-ghost" onclick="openManageHoldings({user_id})">Holdings</button>
+          <button class="btn-primary" onclick="runDaily({user_id}, this)">&#9654; Run Analysis</button>
+          <button class="btn-ghost" onclick="sendEmail({user_id}, this)">&#9993; Send Email</button>
         </div>
       </div>
       {body}
@@ -354,96 +375,578 @@ def _render_page(content: str, api_key: str = "") -> str:
   <title>Stock Analyzer</title>
   <style>
     *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+
+    :root {{
+      --bg:        #0b0f1a;
+      --surface:   #111827;
+      --surface2:  #1a2233;
+      --border:    rgba(255,255,255,.07);
+      --text:      #f1f5f9;
+      --text-muted:#7d8fa8;
+      --accent:    #3b82f6;
+      --accent-dk: #2563eb;
+      --green:     #22c55e;
+      --green-dk:  #16a34a;
+      --red:       #ef4444;
+      --red-dk:    #dc2626;
+      --amber:     #f59e0b;
+      --purple:    #a78bfa;
+      --radius-sm: 8px;
+      --radius-md: 14px;
+      --radius-lg: 20px;
+      --shadow-card: 0 2px 12px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.05);
+      --shadow-btn:  0 2px 8px rgba(0,0,0,.35);
+    }}
+
     body {{
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      background: #0f172a;
-      color: #1f2937;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
       min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
     }}
+
+    /* ── Header ── */
     header {{
-      background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%);
-      padding: 20px 20px 16px;
-      color: white;
-      border-bottom: 1px solid rgba(255,255,255,.08);
+      background: linear-gradient(135deg, #0f2444 0%, #0b1629 50%, #0b0f1a 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      backdrop-filter: blur(12px);
     }}
-    header h1 {{ font-size: 22px; font-weight: 700; letter-spacing: -.3px; }}
-    header p {{ font-size: 13px; color: #94a3b8; margin-top: 2px; }}
-    .main {{ padding: 16px; max-width: 900px; margin: 0 auto; }}
+    .header-inner {{
+      max-width: 980px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 64px;
+      gap: 12px;
+      flex-wrap: wrap;
+      padding: 8px 0;
+    }}
+    .header-brand {{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }}
+    .header-logo {{
+      width: 34px; height: 34px;
+      background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+      border-radius: 9px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px;
+      box-shadow: 0 2px 10px rgba(59,130,246,.4);
+      flex-shrink: 0;
+    }}
+    header h1 {{
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: -.4px;
+    }}
+    header p {{
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 1px;
+      letter-spacing: .2px;
+    }}
+
+    /* ── Main layout ── */
+    .main {{
+      padding: 24px 16px 48px;
+      max-width: 980px;
+      margin: 0 auto;
+    }}
+
+    /* ── Cards ── */
     .card {{
-      background: white;
-      border-radius: 14px;
-      padding: 18px;
+      background: var(--surface);
+      border-radius: var(--radius-md);
+      padding: 22px;
+      margin-bottom: 20px;
+      box-shadow: var(--shadow-card);
+      border: 1px solid var(--border);
+      transition: box-shadow .2s;
+    }}
+    .card:hover {{
+      box-shadow: 0 4px 24px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.09);
+    }}
+
+    /* ── Typography ── */
+    h2 {{
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: -.3px;
+    }}
+    .muted {{ color: var(--text-muted); font-size: 12px; }}
+    .ts-label {{
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 3px;
+    }}
+    .ts-dot {{
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      display: inline-block;
+      box-shadow: 0 0 6px var(--green);
+    }}
+
+    /* ── Pill summary row ── */
+    .pill-row {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
       margin-bottom: 16px;
-      box-shadow: 0 4px 16px rgba(0,0,0,.15);
     }}
-    h2 {{ font-size: 17px; font-weight: 700; color: #111827; }}
-    .muted {{ color: #6b7280; font-size: 13px; }}
-    table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
-    th {{
-      text-align: left; padding: 8px 8px; color: #6b7280;
-      font-size: 11px; font-weight: 600; text-transform: uppercase;
-      letter-spacing: .5px; border-bottom: 2px solid #e5e7eb;
-    }}
-    td {{ padding: 11px 8px; border-bottom: 1px solid #f3f4f6; vertical-align: top; }}
-    tr:last-child td {{ border-bottom: none; }}
-    .badge {{
-      color: white; padding: 4px 9px; border-radius: 6px;
-      font-size: 11px; font-weight: 700; white-space: nowrap; display: inline-block;
-    }}
-    .pill-row {{ display: flex; flex-wrap: wrap; gap: 6px; }}
     .pill {{
-      padding: 4px 10px; border-radius: 20px; font-size: 12px;
-      font-weight: 600; white-space: nowrap;
+      padding: 4px 12px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+      letter-spacing: .3px;
+      border: 1px solid transparent;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      text-transform: uppercase;
     }}
-    .pill-buy   {{ background: #dcfce7; color: #15803d; }}
-    .pill-sell  {{ background: #fee2e2; color: #b91c1c; }}
-    .pill-hold  {{ background: #fef3c7; color: #b45309; }}
-    .pill-neutral {{ background: #e0e7ff; color: #4338ca; }}
-    .run-btn {{
-      background: #2563eb; color: white; border: none; border-radius: 8px;
-      padding: 9px 18px; font-size: 13px; font-weight: 600;
-      cursor: pointer; transition: background .15s;
+    .pill-buy   {{ background: rgba(34,197,94,.1);  color: #4ade80; border-color: rgba(34,197,94,.2); }}
+    .pill-sell  {{ background: rgba(239,68,68,.1);  color: #f87171; border-color: rgba(239,68,68,.2); }}
+    .pill-hold  {{ background: rgba(255,255,255,.05); color: var(--text-muted); border-color: rgba(255,255,255,.1); }}
+    .pill-neutral {{ background: rgba(255,255,255,.05); color: var(--text-muted); border-color: rgba(255,255,255,.1); }}
+    .pdot {{ width: 5px; height: 5px; border-radius: 50%; display: inline-block; flex-shrink: 0; }}
+    .pdot-buy  {{ background: #4ade80; }}
+    .pdot-sell {{ background: #f87171; }}
+    .pdot-hold {{ background: var(--text-muted); }}
+
+    /* ── Card header toolbar ── */
+    .card-header {{
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 18px;
     }}
-    .run-btn:hover {{ background: #1d4ed8; }}
-    .run-btn:disabled {{ background: #93c5fd; cursor: not-allowed; }}
-    .reason-cell {{ color: #6b7280; font-size: 12px; max-width: 260px; }}
+    .card-actions {{
+      display: flex;
+      gap: 7px;
+      flex-wrap: wrap;
+    }}
+
+    /* ── Buttons — unified system ── */
+    .btn-primary, .btn-ghost {{
+      border-radius: var(--radius-sm);
+      padding: 8px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all .15s;
+      letter-spacing: .2px;
+      white-space: nowrap;
+    }}
+    .btn-primary {{
+      background: var(--green-dk);
+      color: white;
+      border: none;
+      box-shadow: 0 2px 8px rgba(22,163,74,.3);
+    }}
+    .btn-primary:hover  {{ background: #15803d; box-shadow: 0 4px 14px rgba(22,163,74,.45); transform: translateY(-1px); }}
+    .btn-primary:active {{ transform: translateY(0); }}
+    .btn-primary:disabled {{ background: #1a3a27; color: #4b7a56; cursor: not-allowed; transform: none; box-shadow: none; }}
+    .btn-ghost {{
+      background: transparent;
+      color: var(--text-muted);
+      border: 1px solid rgba(255,255,255,.12);
+    }}
+    .btn-ghost:hover  {{ background: rgba(255,255,255,.06); color: var(--text); border-color: rgba(255,255,255,.22); transform: translateY(-1px); }}
+    .btn-ghost:active {{ transform: translateY(0); }}
+    .btn-ghost:disabled {{ opacity: .4; cursor: not-allowed; transform: none; }}
+
+    /* ── Add User button in header ── */
+    .btn-add-user {{
+      background: var(--green-dk);
+      color: white;
+      border: none;
+      border-radius: var(--radius-sm);
+      padding: 9px 17px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 2px 10px rgba(22,163,74,.35);
+      transition: all .15s;
+      white-space: nowrap;
+    }}
+    .btn-add-user:hover {{ background: #15803d; box-shadow: 0 4px 16px rgba(22,163,74,.5); transform: translateY(-1px); }}
+    .btn-add-user:active {{ transform: translateY(0); }}
+    /* legacy aliases still used inside modals */
+    .run-btn {{ display: inline-block; border-radius: var(--radius-sm); padding: 8px 14px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all .15s; white-space: nowrap; background: var(--green-dk); color: white; border: none; }}
+    .run-btn:hover {{ background: #15803d; transform: translateY(-1px); }}
+
+    /* ── Table ── */
+    .table-wrap {{
+      overflow-x: auto;
+      margin-top: 4px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+    }}
+    table {{
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }}
+    thead {{ background: var(--surface2); }}
+    th {{
+      text-align: left;
+      padding: 11px 14px;
+      color: var(--text-muted);
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .7px;
+      white-space: nowrap;
+      border-bottom: 1px solid var(--border);
+    }}
+    tbody tr {{
+      border-bottom: 1px solid var(--border);
+      transition: background .12s;
+    }}
+    tbody tr:last-child {{ border-bottom: none; }}
+    tbody tr:nth-child(odd)  {{ background: rgba(255,255,255,.015); }}
+    tbody tr:nth-child(even) {{ background: transparent; }}
+    tbody tr:hover {{ background: rgba(59,130,246,.07); }}
+    td {{
+      padding: 13px 14px;
+      vertical-align: middle;
+    }}
+
+    /* ── Ticker cell ── */
+    .ticker-cell {{
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: .5px;
+      font-variant-numeric: tabular-nums;
+    }}
+
+    /* ── Signal badges (pill-shaped with dot) ── */
+    .badge {{
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 11px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+      letter-spacing: .3px;
+      text-transform: uppercase;
+      border: 1px solid transparent;
+    }}
+    .badge-dot {{
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      display: inline-block;
+      flex-shrink: 0;
+    }}
+    .badge-strong-buy  {{ background: rgba(22,163,74,.15);  color: #4ade80; border-color: rgba(34,197,94,.25); }}
+    .badge-strong-buy .badge-dot  {{ background: #22c55e; box-shadow: 0 0 5px rgba(34,197,94,.7); }}
+    .badge-buy         {{ background: rgba(34,197,94,.1);   color: #86efac; border-color: rgba(34,197,94,.18); }}
+    .badge-buy .badge-dot         {{ background: #86efac; }}
+    .badge-hold        {{ background: rgba(255,255,255,.05); color: var(--text-muted); border-color: rgba(255,255,255,.1); }}
+    .badge-hold .badge-dot        {{ background: #6b7280; }}
+    .badge-sell        {{ background: rgba(239,68,68,.1);   color: #fca5a5; border-color: rgba(239,68,68,.18); }}
+    .badge-sell .badge-dot        {{ background: #fca5a5; }}
+    .badge-strong-sell {{ background: rgba(220,38,38,.17);  color: #f87171; border-color: rgba(220,38,38,.3); }}
+    .badge-strong-sell .badge-dot {{ background: #ef4444; box-shadow: 0 0 5px rgba(239,68,68,.7); }}
+
+    /* ── Score bar ── */
+    .score-wrap {{
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-width: 80px;
+    }}
+    .score-bar-bg {{
+      flex: 1;
+      height: 5px;
+      background: rgba(255,255,255,.1);
+      border-radius: 3px;
+      overflow: hidden;
+    }}
+    .score-bar-fill {{
+      height: 100%;
+      border-radius: 3px;
+      transition: width .3s;
+    }}
+    .score-num {{
+      font-size: 11px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      color: var(--text-muted);
+      white-space: nowrap;
+      min-width: 46px;
+      text-align: right;
+    }}
+
+    /* ── P&L ── */
+    .pl-positive {{ color: #4ade80; font-weight: 700; font-variant-numeric: tabular-nums; }}
+    .pl-negative {{ color: #f87171; font-weight: 700; font-variant-numeric: tabular-nums; }}
+    .pl-neutral  {{ color: var(--text-muted); font-variant-numeric: tabular-nums; }}
+
+    /* ── Affordable shares ── */
+    .affordable-cell {{ color: #93c5fd; font-size: 12px; font-variant-numeric: tabular-nums; }}
+
+    /* ── Reason cell ── */
+    .reason-cell {{
+      color: var(--text-muted);
+      font-size: 12px;
+      line-height: 1.5;
+      max-width: 260px;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }}
+    .reason-cell.expanded {{
+      display: block;
+      overflow: visible;
+      -webkit-line-clamp: unset;
+    }}
+    .reason-cell:not(.expanded):after {{
+      content: ' \2026';
+      color: var(--accent);
+    }}
+
+    /* ── Data warning banner ── */
+    .data-warning {{
+      background: rgba(245,158,11,.1);
+      border-left: 3px solid var(--amber);
+      border-radius: var(--radius-sm);
+      padding: 10px 14px;
+      margin-bottom: 14px;
+      font-size: 12px;
+      color: #fcd34d;
+    }}
+
+    /* ── Empty state ── */
+    .empty-state {{
+      text-align: center;
+      padding: 56px 20px;
+    }}
+    .empty-icon {{
+      font-size: 52px;
+      margin-bottom: 16px;
+      opacity: .85;
+    }}
+    .empty-state h2 {{
+      font-size: 20px;
+      color: var(--text);
+      margin-bottom: 10px;
+    }}
+    .empty-state p {{
+      color: var(--text-muted);
+      font-size: 14px;
+      margin-bottom: 24px;
+    }}
+
+    /* ── Toast ── */
     .toast {{
-      position: fixed; bottom: 20px; right: 20px; left: 20px; max-width: 400px;
-      margin: 0 auto; padding: 12px 16px; border-radius: 10px; color: white;
-      font-size: 14px; font-weight: 500; z-index: 999;
-      box-shadow: 0 8px 24px rgba(0,0,0,.3); display: none;
+      position: fixed;
+      bottom: 24px; right: 24px; left: 24px;
+      max-width: 420px;
+      margin: 0 auto;
+      padding: 13px 18px;
+      border-radius: var(--radius-sm);
+      color: white;
+      font-size: 13px;
+      font-weight: 500;
+      z-index: 999;
+      box-shadow: 0 8px 30px rgba(0,0,0,.5);
+      display: none;
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255,255,255,.1);
     }}
-    .toast.ok  {{ background: #16a34a; }}
-    .toast.err {{ background: #dc2626; }}
-    .empty-state {{ text-align: center; padding: 40px 20px; }}
-    .empty-icon {{ font-size: 48px; margin-bottom: 12px; }}
-    .empty-state h2 {{ color: #374151; margin-bottom: 8px; }}
-    .empty-state p {{ color: #6b7280; font-size: 14px; }}
-    .empty-state a {{ color: #2563eb; }}
+    .toast.ok  {{ background: rgba(22,163,74,.92); }}
+    .toast.err {{ background: rgba(220,38,38,.92); }}
+
+    /* ── Footer ── */
     .footer {{
-      text-align: center; font-size: 11px; color: #475569;
-      padding: 20px; margin-top: 8px;
+      font-size: 11px;
+      color: #374151;
+      padding: 18px 0 4px;
+      margin-top: 8px;
+      letter-spacing: .2px;
+      border-top: 1px solid var(--border);
+    }}
+
+    /* ── Modal backdrop & box ── */
+    .modal-backdrop {{
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.7);
+      backdrop-filter: blur(4px);
+      z-index: 100;
+      overflow-y: auto;
+      padding: 20px;
+    }}
+    .modal-box {{
+      background: var(--surface);
+      border: 1px solid rgba(255,255,255,.1);
+      border-radius: var(--radius-lg);
+      max-width: 480px;
+      margin: 48px auto;
+      padding: 28px;
+      position: relative;
+      box-shadow: 0 24px 60px rgba(0,0,0,.7);
+    }}
+    .modal-box h2 {{ color: var(--text); margin-bottom: 4px; font-size: 18px; }}
+    .modal-close {{
+      position: absolute;
+      top: 18px; right: 18px;
+      background: rgba(255,255,255,.07);
+      border: none;
+      border-radius: 6px;
+      width: 30px; height: 30px;
+      font-size: 15px;
+      cursor: pointer;
+      color: var(--text-muted);
+      display: flex; align-items: center; justify-content: center;
+      transition: background .15s, color .15s;
+    }}
+    .modal-close:hover {{ background: rgba(255,255,255,.14); color: var(--text); }}
+
+    /* ── Form elements ── */
+    .field-label {{
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 5px;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+    }}
+    .field-input {{
+      width: 100%;
+      padding: 10px 13px;
+      background: var(--surface2);
+      border: 1.5px solid rgba(255,255,255,.1);
+      border-radius: var(--radius-sm);
+      font-size: 14px;
+      color: var(--text);
+      outline: none;
+      transition: border .15s, box-shadow .15s;
+    }}
+    .field-input::placeholder {{ color: #4b5563; }}
+    .field-input:focus {{
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(59,130,246,.15);
+    }}
+    .form-err {{ color: #f87171; font-size: 12px; margin-top: 8px; min-height: 18px; }}
+
+    .holding-row {{
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr auto;
+      gap: 6px;
+      margin-bottom: 6px;
+      align-items: center;
+    }}
+    .holding-row input {{
+      padding: 8px 10px;
+      background: var(--surface2);
+      border: 1.5px solid rgba(255,255,255,.1);
+      border-radius: 6px;
+      font-size: 13px;
+      color: var(--text);
+      width: 100%;
+      outline: none;
+    }}
+    .holding-row input:focus {{ border-color: var(--accent); }}
+    .del-btn {{
+      background: rgba(239,68,68,.15);
+      border: 1px solid rgba(239,68,68,.25);
+      border-radius: 6px;
+      color: #f87171;
+      font-size: 14px;
+      cursor: pointer;
+      padding: 4px 8px;
+      line-height: 1;
+      transition: background .15s;
+    }}
+    .del-btn:hover {{ background: rgba(239,68,68,.3); }}
+
+    .manage-holding-row {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 0;
+      border-bottom: 1px solid var(--border);
+    }}
+    .manage-holding-row:last-child {{ border-bottom: none; }}
+    .manage-remove-btn {{
+      background: rgba(239,68,68,.15);
+      color: #f87171;
+      border: 1px solid rgba(239,68,68,.25);
+      border-radius: 6px;
+      padding: 6px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .15s;
+    }}
+    .manage-remove-btn:hover {{ background: rgba(239,68,68,.3); }}
+
+    /* ── Mobile ── */
+    @media (max-width: 640px) {{
+      header {{ padding: 0 16px; }}
+      .main  {{ padding: 16px 12px 32px; }}
+      .card  {{ padding: 16px; border-radius: var(--radius-sm); }}
+      .card-actions {{ gap: 5px; }}
+      .btn-primary, .btn-ghost {{ padding: 7px 10px; font-size: 11px; }}
+      th, td {{ padding: 10px 10px; }}
+      .reason-cell {{ display: none; }}
+      .score-wrap  {{ min-width: 60px; }}
+      .modal-box {{ margin: 20px auto; padding: 20px; border-radius: var(--radius-md); }}
     }}
   </style>
 </head>
 <body>
-  <header style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
-    <div>
-      <h1>📊 Stock Analyzer</h1>
-      <p>Daily recommendations · Not financial advice</p>
+  <header>
+    <div class="header-inner">
+      <div class="header-brand">
+        <div class="header-logo">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+          </svg>
+        </div>
+        <div>
+          <h1>Stock Analyzer</h1>
+          <p>Daily recommendations &middot; Not financial advice</p>
+        </div>
+      </div>
+      <button class="btn-add-user" onclick="openModal()">+ Add User</button>
     </div>
-    <button class="run-btn" onclick="openModal()" style="background:#10b981">+ Add User</button>
   </header>
+
   <div class="main">
     {content}
+    <p class="footer">Not financial advice &nbsp;&middot;&nbsp; Scores: price momentum 15% &nbsp;&middot;&nbsp; technical 30% &nbsp;&middot;&nbsp; sentiment 25% &nbsp;&middot;&nbsp; analyst 20% &nbsp;&middot;&nbsp; earnings 10%</p>
   </div>
-  <p class="footer">Scores: price momentum 20% · technical indicators 40% · news sentiment 40%</p>
 
   <!-- Manage Holdings Modal -->
-  <div id="manage-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;overflow-y:auto;padding:20px">
-    <div style="background:white;border-radius:16px;max-width:480px;margin:40px auto;padding:24px;position:relative">
-      <button onclick="closeManageHoldings()" style="position:absolute;top:16px;right:16px;background:none;border:none;font-size:20px;cursor:pointer;color:#6b7280">✕</button>
-      <h2 style="margin-bottom:4px">Manage Holdings</h2>
+  <div id="manage-overlay" class="modal-backdrop">
+    <div class="modal-box" style="max-width:500px">
+      <button class="modal-close" onclick="closeManageHoldings()">✕</button>
+      <h2>Manage Holdings</h2>
       <p class="muted" style="margin-bottom:20px">Remove stocks you have sold</p>
       <div id="manage-list">
         <p class="muted">Loading…</p>
@@ -452,100 +955,112 @@ def _render_page(content: str, api_key: str = "") -> str:
   </div>
 
   <!-- Add Stock Modal -->
-  <div id="add-stock-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;overflow-y:auto;padding:20px">
-    <div style="background:white;border-radius:16px;max-width:420px;margin:40px auto;padding:24px;position:relative">
-      <button onclick="closeAddStock()" style="position:absolute;top:16px;right:16px;background:none;border:none;font-size:20px;cursor:pointer;color:#6b7280">✕</button>
-      <h2 style="margin-bottom:4px">Add Stock</h2>
-      <p class="muted" style="margin-bottom:20px">Add a stock you already own to your portfolio</p>
+  <div id="add-stock-overlay" class="modal-backdrop">
+    <div class="modal-box" style="max-width:440px">
+      <button class="modal-close" onclick="closeAddStock()">✕</button>
+      <h2>Add Stock</h2>
+      <p class="muted" style="margin-bottom:22px">Add a stock you already own to your portfolio</p>
 
       <label class="field-label">Ticker Symbol</label>
       <input id="as-ticker" class="field-input" placeholder="AAPL" style="text-transform:uppercase" oninput="this.value=this.value.toUpperCase()" />
 
-      <label class="field-label" style="margin-top:12px">Number of Shares</label>
+      <label class="field-label" style="margin-top:14px">Number of Shares</label>
       <input id="as-shares" class="field-input" type="number" placeholder="10" min="0.0001" step="any" />
 
-      <label class="field-label" style="margin-top:12px">Average Cost Per Share ($)</label>
+      <label class="field-label" style="margin-top:14px">Average Cost Per Share ($)</label>
       <input id="as-cost" class="field-input" type="number" placeholder="150.00" min="0" step="any" />
 
       <div id="as-err" class="form-err"></div>
-      <button class="run-btn" style="margin-top:20px;width:100%" onclick="doAddStock()">Add to Portfolio</button>
+      <button class="run-btn btn-green" style="margin-top:22px;width:100%;padding:12px" onclick="doAddStock()">Add to Portfolio</button>
+    </div>
+  </div>
+
+  <!-- Import Modal -->
+  <div id="import-overlay" class="modal-backdrop">
+    <div class="modal-box" style="max-width:460px">
+      <button class="modal-close" onclick="closeImport()">&#x2715;</button>
+      <h2>Bulk Import</h2>
+      <p class="muted" style="margin-bottom:20px">Download the template, fill in your stocks, then upload it.</p>
+
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <button class="btn-ghost" style="padding:12px;text-align:left;border-radius:var(--radius-sm);display:flex;align-items:center;gap:10px" onclick="downloadTemplate()">
+          <span style="font-size:20px">&#8659;</span>
+          <div>
+            <div style="font-weight:600;color:var(--text);font-size:13px">Download Template</div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:2px">portfolio_template.xlsx — fill in Ticker, Shares, Avg Cost</div>
+          </div>
+        </button>
+
+        <label for="import-file" style="display:block;border:1.5px dashed rgba(255,255,255,.15);border-radius:var(--radius-sm);padding:20px;text-align:center;cursor:pointer;transition:border-color .15s" id="import-drop" ondragover="event.preventDefault()" ondrop="handleDrop(event)">
+          <input type="file" id="import-file" accept=".xlsx" style="display:none" onchange="handleFileSelect(this)">
+          <div id="import-file-label">
+            <div style="font-size:28px;margin-bottom:8px">&#128190;</div>
+            <div style="font-size:13px;color:var(--text-muted)">Click to choose .xlsx file or drag &amp; drop</div>
+          </div>
+        </label>
+      </div>
+
+      <div id="import-err" class="form-err" style="margin-top:10px"></div>
+      <button class="btn-primary" id="import-submit-btn" style="margin-top:18px;width:100%;padding:12px;display:none" onclick="doImport()">Upload &amp; Add Stocks</button>
     </div>
   </div>
 
   <!-- Add User Modal -->
-  <div id="modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;overflow-y:auto;padding:20px">
-    <div style="background:white;border-radius:16px;max-width:520px;margin:40px auto;padding:24px;position:relative">
-      <button onclick="closeModal()" style="position:absolute;top:16px;right:16px;background:none;border:none;font-size:20px;cursor:pointer;color:#6b7280">✕</button>
+  <div id="modal-overlay" class="modal-backdrop">
+    <div class="modal-box" style="max-width:540px">
+      <button class="modal-close" onclick="closeModal()">✕</button>
 
       <!-- Step 1: Register -->
       <div id="step1">
         <h2 style="margin-bottom:4px">Create Account</h2>
-        <p class="muted" style="margin-bottom:20px">Step 1 of 2 — Your details</p>
+        <p class="muted" style="margin-bottom:22px">Step 1 of 2 — Your details</p>
         <label class="field-label">Full Name</label>
         <input id="reg-name" class="field-input" placeholder="Jane Smith" />
         <div id="step1-err" class="form-err"></div>
-        <button class="run-btn" style="margin-top:20px;width:100%" onclick="doRegister()">Continue →</button>
+        <button class="run-btn" style="margin-top:22px;width:100%;padding:12px" onclick="doRegister()">Continue →</button>
       </div>
 
       <!-- Step 2: Onboard -->
       <div id="step2" style="display:none">
         <h2 style="margin-bottom:4px">Your Portfolio</h2>
-        <p class="muted" style="margin-bottom:20px">Step 2 of 2 — Add existing holdings (optional)</p>
+        <p class="muted" style="margin-bottom:22px">Step 2 of 2 — Add existing holdings (optional)</p>
 
-        <label style="display:flex;align-items:center;gap:10px;font-size:14px;margin-bottom:16px;cursor:pointer">
+        <label style="display:flex;align-items:center;gap:10px;font-size:14px;margin-bottom:18px;cursor:pointer;color:var(--text)">
           <input type="checkbox" id="has-stocks" onchange="toggleHoldings(this.checked)"
-                 style="width:16px;height:16px;accent-color:#2563eb">
+                 style="width:16px;height:16px;accent-color:#3b82f6">
           I already own stocks I want to track
         </label>
 
         <div id="holdings-section" style="display:none">
-          <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:6px;margin-bottom:6px">
-            <span style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase">Ticker</span>
-            <span style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase">Shares</span>
-            <span style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase">Avg Cost</span>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:6px;margin-bottom:8px">
+            <span style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px">Ticker</span>
+            <span style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px">Shares</span>
+            <span style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px">Avg Cost</span>
             <span></span>
           </div>
           <div id="holdings-rows"></div>
-          <button onclick="addHoldingRow()" style="background:none;border:1px dashed #d1d5db;border-radius:8px;padding:8px;width:100%;color:#6b7280;font-size:13px;cursor:pointer;margin-top:6px">+ Add stock</button>
+          <button onclick="addHoldingRow()"
+                  style="background:none;border:1px dashed rgba(255,255,255,.15);border-radius:8px;
+                         padding:9px;width:100%;color:var(--text-muted);font-size:13px;
+                         cursor:pointer;margin-top:8px;transition:border-color .15s,color .15s">
+            + Add stock
+          </button>
         </div>
 
         <div id="step2-err" class="form-err"></div>
-        <button class="run-btn" style="margin-top:20px;width:100%" onclick="doOnboard()">Finish Setup ✓</button>
+        <button class="run-btn btn-green" style="margin-top:22px;width:100%;padding:12px" onclick="doOnboard()">Finish Setup ✓</button>
       </div>
 
       <!-- Done -->
-      <div id="step-done" style="display:none;text-align:center;padding:20px 0">
-        <div style="font-size:48px;margin-bottom:12px">🎉</div>
+      <div id="step-done" style="display:none;text-align:center;padding:24px 0">
+        <div style="font-size:52px;margin-bottom:14px">🎉</div>
         <h2>You're all set!</h2>
-        <p class="muted" style="margin-top:6px">Reloading dashboard…</p>
+        <p class="muted" style="margin-top:8px">Reloading dashboard…</p>
       </div>
     </div>
   </div>
 
   <div id="toast" class="toast"></div>
-
-  <style>
-    .field-label {{ display:block;font-size:13px;font-weight:600;color:#374151;margin-bottom:4px }}
-    .field-input {{
-      width:100%;padding:10px 12px;border:1.5px solid #d1d5db;border-radius:8px;
-      font-size:14px;outline:none;transition:border .15s
-    }}
-    .field-input:focus {{ border-color:#2563eb }}
-    .form-err {{ color:#dc2626;font-size:13px;margin-top:8px;min-height:18px }}
-    .holding-row {{
-      display:grid;grid-template-columns:1fr 1fr 1fr auto;
-      gap:6px;margin-bottom:6px;align-items:center
-    }}
-    .holding-row input {{
-      padding:8px;border:1.5px solid #d1d5db;border-radius:6px;
-      font-size:13px;width:100%;outline:none
-    }}
-    .holding-row input:focus {{ border-color:#2563eb }}
-    .del-btn {{
-      background:none;border:none;color:#ef4444;font-size:18px;
-      cursor:pointer;padding:0 4px;line-height:1
-    }}
-  </style>
 
   <script>
     const _apiKey = "{api_key}";
@@ -574,22 +1089,17 @@ def _render_page(content: str, api_key: str = "") -> str:
         let rows = '';
         for (const h of data) {{
           rows += `
-          <div style="display:flex;align-items:center;justify-content:space-between;
-                      padding:10px 0;border-bottom:1px solid #f3f4f6">
+          <div class="manage-holding-row">
             <div>
-              <strong style="font-size:15px">${{h.ticker}}</strong>
+              <strong style="font-size:15px;color:var(--text)">${{h.ticker}}</strong>
               <span class="muted" style="margin-left:8px">${{h.shares}} sh @ $${{h.avg_cost_basis.toFixed(2)}}</span>
             </div>
-            <button onclick="removeHolding(${{h.id}}, '${{h.ticker}}')"
-                    style="background:#fee2e2;color:#dc2626;border:none;border-radius:6px;
-                           padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer">
-              Remove
-            </button>
+            <button class="manage-remove-btn" onclick="removeHolding(${{h.id}}, '${{h.ticker}}')">Remove</button>
           </div>`;
         }}
         document.getElementById('manage-list').innerHTML = rows;
       }} catch(e) {{
-        document.getElementById('manage-list').innerHTML = `<p style="color:#dc2626">${{e.message}}</p>`;
+        document.getElementById('manage-list').innerHTML = `<p style="color:#f87171">${{e.message}}</p>`;
       }}
     }}
 
@@ -733,23 +1243,23 @@ def _render_page(content: str, api_key: str = "") -> str:
 
     async function sendEmail(userId, btn) {{
       btn.disabled = true;
-      btn.textContent = '⏳ Sending…';
+      btn.textContent = 'Sending\u2026';
       try {{
         const res = await fetch(`/messaging/send/${{userId}}`, {{ method: 'POST', headers: _authHeaders }});
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Unknown error');
-        showToast(`✅ Email sent — ${{data.subject}}`, 'ok');
+        showToast(`\u2705 Email sent \u2014 ${{data.subject}}`, 'ok');
       }} catch (e) {{
-        showToast('❌ ' + e.message, 'err');
+        showToast('\u274c ' + e.message, 'err');
       }} finally {{
         btn.disabled = false;
-        btn.textContent = '✉ Send Email';
+        btn.textContent = '\u2709 Send Email';
       }}
     }}
 
     async function runDaily(userId, btn) {{
       btn.disabled = true;
-      btn.textContent = '⏳ Running…';
+      btn.textContent = 'Running\u2026';
       try {{
         const res = await fetch(`/run-daily/${{userId}}`, {{ method: 'POST', headers: _authHeaders }});
         const data = await res.json();
@@ -761,9 +1271,79 @@ def _render_page(content: str, api_key: str = "") -> str:
       }} catch (e) {{
         showToast('❌ ' + e.message, 'err');
         btn.disabled = false;
-        btn.textContent = '▶ Run Analysis';
+        btn.textContent = '\u25b6 Run Analysis';
       }}
     }}
+
+    let _importUserId = null;
+    let _importFile = null;
+
+    function openImport(userId) {{
+      _importUserId = userId;
+      _importFile = null;
+      document.getElementById('import-file').value = '';
+      document.getElementById('import-file-label').innerHTML = '<div style="font-size:28px;margin-bottom:8px">\U0001F4BE</div><div style="font-size:13px;color:var(--text-muted)">Click to choose .xlsx file or drag &amp; drop</div>';
+      document.getElementById('import-err').textContent = '';
+      document.getElementById('import-submit-btn').style.display = 'none';
+      document.getElementById('import-overlay').style.display = 'block';
+      document.body.style.overflow = 'hidden';
+    }}
+    function closeImport() {{
+      document.getElementById('import-overlay').style.display = 'none';
+      document.body.style.overflow = '';
+    }}
+    function downloadTemplate() {{
+      window.location.href = `/users/${{_importUserId}}/portfolio/template`;
+    }}
+    function handleFileSelect(input) {{
+      if (input.files[0]) setImportFile(input.files[0]);
+    }}
+    function handleDrop(event) {{
+      event.preventDefault();
+      const f = event.dataTransfer.files[0];
+      if (f) setImportFile(f);
+    }}
+    function setImportFile(f) {{
+      _importFile = f;
+      document.getElementById('import-file-label').innerHTML =
+        `<div style="font-size:20px;margin-bottom:6px">\u2705</div><div style="font-size:13px;color:var(--text)">${{f.name}}</div>`;
+      document.getElementById('import-submit-btn').style.display = 'block';
+      document.getElementById('import-err').textContent = '';
+    }}
+    async function doImport() {{
+      if (!_importFile) return;
+      const btn = document.getElementById('import-submit-btn');
+      btn.disabled = true;
+      btn.textContent = 'Uploading\u2026';
+      const form = new FormData();
+      form.append('file', _importFile);
+      const headers = _apiKey ? {{'Authorization': 'Bearer ' + _apiKey}} : {{}};
+      try {{
+        const res = await fetch(`/users/${{_importUserId}}/portfolio/bulk`, {{
+          method: 'POST', headers, body: form,
+        }});
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Upload failed');
+        closeImport();
+        let msg = `\u2705 Added ${{data.added}} stock${{data.added !== 1 ? 's' : ''}}`;
+        if (data.skipped) msg += ` \u00b7 ${{data.skipped}} skipped`;
+        if (data.errors && data.errors.length) msg += ` \u2014 ${{data.errors[0]}}`;
+        showToast(msg, data.skipped ? 'err' : 'ok');
+        setTimeout(() => location.reload(), 1500);
+      }} catch(e) {{
+        document.getElementById('import-err').textContent = '\u274c ' + e.message;
+        btn.disabled = false;
+        btn.textContent = 'Upload & Add Stocks';
+      }}
+    }}
+
+    document.querySelectorAll('tr.rec-row').forEach(row => {{
+      row.style.cursor = 'pointer';
+      row.addEventListener('click', () => {{
+        const cell = row.querySelector('.reason-cell');
+        if (cell) cell.classList.toggle('expanded');
+      }});
+    }});
 
     function showToast(msg, type) {{
       const t = document.getElementById('toast');
