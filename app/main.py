@@ -1386,8 +1386,20 @@ def _render_page(content: str, api_key: str = "") -> str:
       document.getElementById('import-overlay').style.display = 'none';
       document.body.style.overflow = '';
     }}
-    function downloadTemplate() {{
-      window.location.href = `/users/${{_importUserId}}/portfolio/template`;
+    async function downloadTemplate() {{
+      try {{
+        const res = await fetch(`/users/${{_importUserId}}/portfolio/template`, {{ headers: _authHeaders }});
+        if (!res.ok) throw new Error('Download failed');
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'portfolio_template.xlsx';
+        a.click();
+        URL.revokeObjectURL(url);
+      }} catch(e) {{
+        showToast('\u274c ' + e.message, 'err');
+      }}
     }}
     function handleFileSelect(input) {{
       if (input.files[0]) setImportFile(input.files[0]);
