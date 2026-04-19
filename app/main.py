@@ -291,9 +291,10 @@ def _render_user_section(user_id: int, name: str, generated_at, recs, holdings_c
 
             reason_short = _plain_summary(r)
 
+            ai_badge = '<span style="background:#7c3aed;color:white;font-size:9px;font-weight:700;padding:1px 4px;border-radius:3px;vertical-align:middle;margin-left:4px">AI</span>' if r.get("llm_used") else ""
             rows += f"""
             <tr class="rec-row" data-reason="{r['reason'] or ''}">
-              <td class="ticker-cell">{r['ticker']}</td>
+              <td class="ticker-cell">{r['ticker']}{ai_badge}</td>
               <td>
                 <span class="badge {meta['badge_cls']}"><span class="badge-dot"></span>{r['signal'].replace('_', ' ')}</span>
               </td>

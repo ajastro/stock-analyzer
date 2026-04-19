@@ -3,6 +3,7 @@ from datetime import datetime
 
 from app.database import get_db
 from app.finnhub_service import get_quote, get_candles, _get_client
+from app.llm_analysis import analyze_with_claude
 from app.sentiment_service import refresh_sentiment_for_ticker
 
 
@@ -430,30 +431,63 @@ def generate_recommendations(user_id: int) -> list[dict]:
             else:
                 reasons.append("Not currently held (watchlist)")
 
-            combined = round(combined + personal_adjustment, 4)
-            signal = _signal_from_score(combined)
+            formula_combined = round(combined + personal_adjustment, 4)
+            formula_signal = _signal_from_score(formula_combined)
+
+            # --- LLM override ---
+            llm_formula_data = {
+                "price_score": round(price_score, 4),
+                "price_reason": price_reason,
+                "technical_score": round(tech_score, 4),
+                "tech_reason": tech_reason,
+                "sentiment_score": round(sent_score, 4),
+                "sent_reason": sent_reason,
+                "analyst_score": round(analyst_score, 4),
+                "analyst_reason": analyst_reason,
+                "earnings_score": round(earnings_score, 4),
+                "earn_reason": earnings_reason,
+                "formula_combined": formula_combined,
+                "formula_signal": formula_signal,
+                "pl_pct": pl_pct,
+                "unrealized_gain_loss": unrealized_gl,
+                "current_price": current_price if current_price > 0 else None,
+            }
+            llm_result = analyze_with_claude(ticker, llm_formula_data)
+
+            if llm_result:
+                signal = llm_result["signal"]
+                combined = round(llm_result["score"], 4)
+                reason = llm_result["reason"]
+                llm_used = True
+            else:
+                signal = formula_signal
+                combined = formula_combined
+                reason = " | ".join(filter(None, reasons))
+                llm_used = False
 
             if signal in ("BUY", "STRONG_BUY") and current_price > 0:
                 affordable_shares = round(remaining_budget / current_price, 4)
-                if affordable_shares > 0:
-                    reasons.append(f"Can afford {affordable_shares:.2f} shares with ${remaining_budget:.2f} budget")
-                else:
-                    reasons.append(f"Insufficient budget (${remaining_budget:.2f})")
+                if not llm_used:
+                    if affordable_shares > 0:
+                        reason += f" | Can afford {affordable_shares:.2f} shares with ${remaining_budget:.2f} budget"
+                    else:
+                        reason += f" | Insufficient budget (${remaining_budget:.2f})"
 
             rec = {
                 "user_id": user_id,
                 "ticker": ticker,
                 "signal": signal,
-                "combined_score": round(combined, 4),
+                "combined_score": combined,
                 "price_score": round(price_score, 4),
                 "technical_score": round(tech_score, 4),
                 "sentiment_score": round(sent_score, 4),
                 "current_price": current_price if current_price > 0 else None,
-                "reason": " | ".join(reasons),
+                "reason": reason,
                 "affordable_shares": affordable_shares,
                 "unrealized_gain_loss": unrealized_gl,
                 "alert_triggered": alert_triggered,
                 "alert_date": alert_date,
+                "llm_used": llm_used,
             }
             results.append(rec)
 
