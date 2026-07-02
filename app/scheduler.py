@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from app.daily_decision import run_daily_decision
 from app.database import get_db
 from app.email_service import format_morning_email, is_configured, send_email
 from app.recommendation_engine import generate_recommendations
@@ -50,7 +51,15 @@ async def _morning_report():
                 }
             exclude = holdings_tickers | watchlist_tickers
             screener_results = get_cached_results(exclude_tickers=exclude)
-            subject, html = format_morning_email(recs, holdings_tickers, screener_results)
+
+            # Single portfolio-level LLM decision (falls back to formula-only email)
+            decision = None
+            try:
+                decision = run_daily_decision(user_id, recs)
+            except Exception as e:
+                logger.warning(f"User {user_id}: LLM decision failed — {e}")
+
+            subject, html = format_morning_email(recs, holdings_tickers, screener_results, decision)
             send_email(subject, html)
 
             with get_db() as conn:

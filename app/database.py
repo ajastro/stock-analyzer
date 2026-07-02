@@ -170,6 +170,21 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_message_log_user
                 ON message_log(user_id, sent_at);
 
+            CREATE TABLE IF NOT EXISTS daily_decisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                summary TEXT,
+                decision_json TEXT NOT NULL,
+                model TEXT,
+                input_tokens INTEGER,
+                output_tokens INTEGER,
+                generated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_daily_decisions_user
+                ON daily_decisions(user_id, generated_at);
+
             CREATE TABLE IF NOT EXISTS screener_results (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ticker TEXT NOT NULL,

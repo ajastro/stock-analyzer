@@ -33,11 +33,12 @@ def format_morning_email(
     recs: list[dict],
     holdings_tickers: set[str] | None = None,
     screener_results: list[dict] | None = None,
+    decision: dict | None = None,
 ) -> tuple[str, str]:
     """Returns (subject, html_body) for the daily morning report.
 
-    Always sends — includes buy signals, sell signals, hold summary,
-    and a watchlist opportunities section for non-owned buy signals.
+    When an AI daily decision is available it leads the email; the formula
+    sections follow as supporting detail. Always sends.
     """
     date_str = datetime.now(ET).strftime("%A, %B %d, %Y")
     now_utc = datetime.now(ET).strftime("%I:%M %p CT")
@@ -60,7 +61,19 @@ def format_morning_email(
     sell_count = len(sells)
     wl_count   = len(watchlist_buys)
 
-    if buy_count == 0 and sell_count == 0 and wl_count == 0:
+    # Subject: prefer the AI decision counts when available
+    if decision is not None:
+        d_buys, d_sells = len(decision.get("buys", [])), len(decision.get("sells", []))
+        if d_buys == 0 and d_sells == 0:
+            subject = f"Stock Analyzer — AI: No Action Today ({date_str})"
+        else:
+            parts = []
+            if d_buys:
+                parts.append(f"{d_buys} Buy")
+            if d_sells:
+                parts.append(f"{d_sells} Sell")
+            subject = f"Stock Analyzer — AI: {', '.join(parts)} ({date_str})"
+    elif buy_count == 0 and sell_count == 0 and wl_count == 0:
         subject = f"Stock Analyzer — No Action Needed ({date_str})"
     elif buy_count > 0 and sell_count > 0:
         subject = f"Stock Analyzer — {buy_count} Buy, {sell_count} Sell ({date_str})"
@@ -71,6 +84,7 @@ def format_morning_email(
     else:
         subject = f"Stock Analyzer — {wl_count} Watchlist Opportunit{'ies' if wl_count > 1 else 'y'} ({date_str})"
 
+    decision_section  = _render_decision_section(decision)
     buy_section       = _render_buy_section(buys)
     sell_section      = _render_sell_section(sells)
     hold_section      = _render_hold_summary(holds)
@@ -84,6 +98,7 @@ def format_morning_email(
   <p style="color:#6b7280;font-size:13px;margin-top:0">
     Market opens 8:30 AM CT &nbsp;·&nbsp; Generated {now_utc}
   </p>
+  {decision_section}
   {buy_section}
   {sell_section}
   {hold_section}
@@ -97,6 +112,84 @@ def format_morning_email(
 </body></html>"""
 
     return subject, html
+
+
+_CONVICTION_COLORS = {"HIGH": "#16a34a", "MEDIUM": "#22c55e", "LOW": "#86efac"}
+_URGENCY_COLORS = {"HIGH": "#dc2626", "MEDIUM": "#ef4444", "LOW": "#fca5a5"}
+
+
+def _render_decision_section(decision: dict | None) -> str:
+    """Lead section of the email: the single daily AI portfolio decision."""
+    if decision is None:
+        return ""
+
+    buys = decision.get("buys", [])
+    sells = decision.get("sells", [])
+    summary = decision.get("summary", "")
+
+    buy_rows = ""
+    for b in buys:
+        color = _CONVICTION_COLORS.get(b.get("conviction", ""), "#22c55e")
+        buy_rows += f"""
+        <tr>
+          <td style="{_td}font-weight:600;font-size:15px">{b['ticker']}</td>
+          <td style="{_td}">
+            <span style="background:{color};color:white;padding:3px 8px;border-radius:4px;
+                         font-size:11px;font-weight:600">BUY · {b.get('conviction', '')}</span>
+          </td>
+          <td style="{_td}">${b.get('allocation_usd', 0):.2f}</td>
+          <td style="{_td};font-size:12px;color:#374151">{b.get('reason', '')}</td>
+        </tr>"""
+
+    sell_rows = ""
+    for s in sells:
+        color = _URGENCY_COLORS.get(s.get("urgency", ""), "#ef4444")
+        sell_rows += f"""
+        <tr>
+          <td style="{_td}font-weight:600;font-size:15px">{s['ticker']}</td>
+          <td style="{_td}">
+            <span style="background:{color};color:white;padding:3px 8px;border-radius:4px;
+                         font-size:11px;font-weight:600">SELL · {s.get('urgency', '')}</span>
+          </td>
+          <td style="{_td};font-size:12px;color:#374151" colspan="2">{s.get('reason', '')}</td>
+        </tr>"""
+
+    if buy_rows or sell_rows:
+        table = f"""
+      <table style="width:100%;border-collapse:collapse;margin-top:10px">
+        <thead><tr style="background:#f5f3ff">
+          <th style="{_th}">Ticker</th>
+          <th style="{_th}">Action</th>
+          <th style="{_th}">Allocate</th>
+          <th style="{_th}">Why</th>
+        </tr></thead>
+        <tbody>{buy_rows}{sell_rows}</tbody>
+      </table>"""
+    else:
+        table = """
+      <p style="font-size:13px;color:#374151;margin:10px 0 0">
+        <strong>No trades recommended today</strong> — hold everything.
+      </p>"""
+
+    holds = decision.get("holds", [])
+    holds_line = ""
+    if holds:
+        holds_line = f"""
+      <p style="font-size:12px;color:#6b7280;margin:10px 0 0">
+        Holding: {', '.join(h['ticker'] for h in holds)}
+      </p>"""
+
+    return f"""
+    <div style="background:#faf5ff;border:1px solid #ddd6fe;border-radius:8px;
+                padding:16px;margin:16px 0">
+      <h3 style="color:#6d28d9;margin:0 0 6px">
+        🤖 Today's Decision
+        <span style="font-weight:400;font-size:11px;color:#8b5cf6">Claude portfolio analysis</span>
+      </h3>
+      <p style="font-size:13px;color:#374151;margin:0">{summary}</p>
+      {table}
+      {holds_line}
+    </div>"""
 
 
 def _render_buy_section(buys: list[dict]) -> str:

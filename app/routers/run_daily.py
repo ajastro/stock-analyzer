@@ -4,6 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from app.daily_decision import run_daily_decision
 from app.database import get_db
 from app.finnhub_service import get_quote
 from app.recommendation_engine import generate_recommendations
@@ -17,6 +18,8 @@ class RunDailyResponse(BaseModel):
     prices_refreshed: int
     articles_analyzed: int
     recommendations_generated: int
+    ai_decision: bool = False
+    ai_summary: Optional[str] = None
     errors: list[str]
 
 
@@ -88,12 +91,22 @@ def run_daily(user_id: int):
     articles_after = _count_recent_articles(tickers)
     articles_analyzed = max(0, articles_after - articles_before)
 
+    # --- Step 4: Single portfolio-level LLM decision ---
+    decision = None
+    if recs:
+        try:
+            decision = run_daily_decision(user_id, recs)
+        except Exception as e:
+            errors.append(f"AI decision failed: {e}")
+
     return RunDailyResponse(
         user_id=user_id,
         tickers=tickers,
         prices_refreshed=prices_refreshed,
         articles_analyzed=articles_analyzed,
         recommendations_generated=len(recs),
+        ai_decision=decision is not None,
+        ai_summary=decision.get("summary") if decision else None,
         errors=errors,
     )
 

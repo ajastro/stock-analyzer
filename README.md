@@ -1,6 +1,35 @@
 # Stock Analyzer
 
-A stock-tracking application that provides buy/sell recommendations based on stock prices and news sentiment, delivered via WhatsApp.
+A stock-tracking application that suggests stocks to buy (that you don't own) and sell (that you do own), delivered via email and a web dashboard.
+
+## How recommendations work
+
+Two-stage pipeline, run each weekday morning:
+
+1. **Formula screen (no LLM).** A 6:00 AM job scores the full S&P 500 on five factors
+   (price momentum, technicals, news sentiment, analyst consensus, earnings). The same
+   scoring runs on your holdings and watchlist. This stage is the cheap filter.
+2. **One LLM call per user per day.** The shortlist — every holding plus the top buy
+   candidates you don't own, each with scores, P&L, and recent headlines — goes to
+   Claude (`claude-opus-4-8`) in a single portfolio-level call with a guaranteed JSON
+   schema. It returns the day's decision: what to buy (with budget allocation), what
+   to sell, what to hold, and why. Stored in `daily_decisions`, shown at the top of
+   the morning email and dashboard.
+
+If `ANTHROPIC_API_KEY` is not set or the call fails, the app falls back to the
+formula signals — nothing breaks.
+
+At roughly 5K input / 1K output tokens per day, the LLM layer costs about **$2–3/month**.
+
+### Key environment variables
+
+| Variable | Purpose |
+|----------|---------|
+| `ANTHROPIC_API_KEY` | Enables the daily AI portfolio decision |
+| `FINNHUB_API_KEY` | Market data (quotes, candles, news) |
+| `RESEND_API_KEY`, `ALERT_EMAIL` | Morning/weekly report emails |
+| `DASHBOARD_USER`, `DASHBOARD_PASSWORD` | Dashboard basic auth |
+| `API_SECRET_KEY` | Bearer token for the REST API |
 
 ## Phase 1: Onboarding + Portfolio DB
 

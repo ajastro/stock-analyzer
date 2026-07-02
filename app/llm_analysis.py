@@ -1,10 +1,18 @@
 """
-LLM-based stock analysis using the Claude API (claude-haiku-4-5).
+LLM-based portfolio decision using the Claude API (claude-opus-4-8).
 
-Takes the formula-computed component scores and raw data context, then asks
-Claude to review everything and produce a final signal, score, and narrative reason.
+One call per user per day: the formula engine produces a shortlist (all current
+holdings + top buy candidates the user does not own), and Claude makes the
+portfolio-level decision — what to buy, what to sell, what to hold — with the
+whole picture in view (relative attractiveness, concentration, budget).
 
-Falls back gracefully to None if the API is unavailable or not configured.
+This replaces the previous per-ticker analyze_with_claude() design, which paid
+one API call per ticker for the model to re-derive the formula signal it was
+already handed. A single portfolio-level call is both cheaper and lets the
+model do cross-sectional reasoning the per-ticker calls could not.
+
+Falls back gracefully to None if the API is unavailable or not configured;
+callers then use the formula signals directly.
 """
 import json
 import logging
@@ -12,124 +20,210 @@ import os
 
 logger = logging.getLogger(__name__)
 
-_VALID_SIGNALS = {"STRONG_BUY", "BUY", "HOLD", "SELL", "STRONG_SELL"}
+MODEL = "claude-opus-4-8"
+MAX_TOKENS = 8000
 
 _SYSTEM_PROMPT = """\
-You are a quantitative stock analyst. You will be given formula-based scoring data for a stock \
-and must provide your own independent signal based on the evidence.
+You are a disciplined portfolio analyst making one daily decision for a small retail
+portfolio. The user invests ~$100/day of fresh budget plus realized sell profits.
 
-Respond ONLY with a single valid JSON object — no markdown, no explanation outside the JSON:
-{
-  "signal": "<STRONG_BUY|BUY|HOLD|SELL|STRONG_SELL>",
-  "score": <float between -1.0 and 1.0>,
-  "reason": "<2-3 sentence narrative explaining your signal>"
-}
+You will receive:
+1. HOLDINGS — stocks the user owns, with cost basis, P&L, formula scores and recent headlines.
+2. BUY CANDIDATES — stocks the user does NOT own, pre-screened by a quantitative formula.
+3. Today's remaining cash budget.
 
-Guidelines:
-- STRONG_BUY: score >= 0.3, clear multi-factor bullish alignment
-- BUY: score 0.1 to 0.3, moderate bullish lean
-- HOLD: score -0.1 to 0.1, mixed or neutral signals
-- SELL: score -0.3 to -0.1, moderate bearish lean
-- STRONG_SELL: score <= -0.3, clear multi-factor bearish alignment
-- Your reason should be specific to the data provided, not generic boilerplate.
-- If the position has stop-loss or take-profit context, weigh it appropriately.\
+Your job:
+- From BUY CANDIDATES only: pick 0-3 to buy today. Prefer fewer, higher-conviction picks
+  over spreading the budget thin. Allocations must sum to at most the available budget.
+  Avoid doubling up on candidates that represent the same bet (same sector/theme) —
+  pick the better one.
+- From HOLDINGS only: flag any that should be sold (deteriorating evidence, stop-loss
+  breach, or take-profit worth banking). Every holding you don't sell goes in holds.
+- It is completely fine — often correct — to buy nothing and sell nothing.
+
+Rules:
+- Never put a holding in buys. Never put a non-holding in sells or holds.
+- Every holding must appear in exactly one of sells or holds.
+- Reasons must cite the specific evidence provided (scores, P&L, headlines), not
+  generic boilerplate. 1-2 sentences each.
+- The summary is 2-4 sentences: the single most important action today and why.\
 """
 
+_DECISION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {
+            "type": "string",
+            "description": "2-4 sentence portfolio-level assessment of today's decision",
+        },
+        "buys": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "ticker": {"type": "string"},
+                    "conviction": {"type": "string", "enum": ["HIGH", "MEDIUM", "LOW"]},
+                    "allocation_usd": {
+                        "type": "number",
+                        "description": "Dollars of today's budget to put into this ticker",
+                    },
+                    "reason": {"type": "string"},
+                },
+                "required": ["ticker", "conviction", "allocation_usd", "reason"],
+                "additionalProperties": False,
+            },
+        },
+        "sells": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "ticker": {"type": "string"},
+                    "urgency": {"type": "string", "enum": ["HIGH", "MEDIUM", "LOW"]},
+                    "reason": {"type": "string"},
+                },
+                "required": ["ticker", "urgency", "reason"],
+                "additionalProperties": False,
+            },
+        },
+        "holds": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "ticker": {"type": "string"},
+                    "reason": {"type": "string"},
+                },
+                "required": ["ticker", "reason"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["summary", "buys", "sells", "holds"],
+    "additionalProperties": False,
+}
 
-def analyze_with_claude(ticker: str, formula_data: dict) -> dict | None:
+
+def decide_portfolio(
+    holdings: list[dict],
+    candidates: list[dict],
+    budget_remaining: float,
+) -> tuple[dict, dict] | None:
     """
-    Call Claude to review formula scores and produce a final signal override.
+    Make the single daily portfolio decision.
 
     Parameters
     ----------
-    ticker : str
-        Stock ticker symbol.
-    formula_data : dict
-        Keys: price_score, price_reason, technical_score, tech_reason,
-              sentiment_score, sent_reason, analyst_score, analyst_reason,
-              earnings_score, earn_reason, formula_combined, formula_signal,
-              pl_pct (optional), unrealized_gain_loss (optional),
-              current_price (optional).
+    holdings : list of dicts prepared by daily_decision.py — each has
+        ticker, shares, avg_cost_basis, current_price, pl_pct,
+        unrealized_gain_loss, signal, combined_score, reason, headlines.
+    candidates : list of dicts — each has ticker, current_price, signal,
+        combined_score, reason, headlines, source ("watchlist"/"screener").
+    budget_remaining : today's available cash.
 
     Returns
     -------
-    dict with keys "signal", "score", "reason", or None on failure.
+    (decision, usage) where decision matches _DECISION_SCHEMA and usage has
+    input_tokens/output_tokens, or None on any failure (callers fall back to
+    the formula signals).
     """
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
-        logger.debug("ANTHROPIC_API_KEY not set — skipping LLM analysis")
+        logger.debug("ANTHROPIC_API_KEY not set — skipping LLM decision")
         return None
 
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=api_key)
     except ImportError:
-        logger.warning("anthropic package not installed — skipping LLM analysis")
+        logger.warning("anthropic package not installed — skipping LLM decision")
         return None
 
-    user_prompt = _build_prompt(ticker, formula_data)
+    prompt = _build_prompt(holdings, candidates, budget_remaining)
 
     try:
         message = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=512,
+            model=MODEL,
+            max_tokens=MAX_TOKENS,
+            thinking={"type": "adaptive"},
             system=_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_prompt}],
+            messages=[{"role": "user", "content": prompt}],
+            output_config={"format": {"type": "json_schema", "schema": _DECISION_SCHEMA}},
         )
-        raw = message.content[0].text.strip()
-        result = json.loads(raw)
 
-        signal = result.get("signal", "").upper()
-        score = float(result.get("score", 0.0))
-        reason = str(result.get("reason", "")).strip()
-
-        if signal not in _VALID_SIGNALS:
-            logger.warning(f"LLM returned invalid signal '{signal}' for {ticker} — falling back")
+        if message.stop_reason == "refusal":
+            logger.warning("LLM declined the request — falling back to formula signals")
             return None
 
-        score = max(-1.0, min(1.0, score))
-        if not reason:
-            logger.warning(f"LLM returned empty reason for {ticker} — falling back")
-            return None
+        raw = next((b.text for b in message.content if b.type == "text"), "")
+        decision = json.loads(raw)
 
-        return {"signal": signal, "score": score, "reason": reason}
+        usage = {
+            "input_tokens": message.usage.input_tokens,
+            "output_tokens": message.usage.output_tokens,
+        }
+        return decision, usage
 
     except json.JSONDecodeError as e:
-        logger.warning(f"LLM returned non-JSON for {ticker}: {e}")
+        logger.warning(f"LLM returned non-JSON decision: {e}")
         return None
     except Exception as e:
-        logger.warning(f"LLM analysis failed for {ticker}: {e}")
+        logger.warning(f"LLM portfolio decision failed: {e}")
         return None
 
 
-def _build_prompt(ticker: str, d: dict) -> str:
-    lines = [f"Ticker: {ticker}"]
-
-    if d.get("current_price"):
-        lines.append(f"Current price: ${d['current_price']:.2f}")
-
-    lines.append("")
-    lines.append("Formula component scores (-1.0 to +1.0 scale):")
-    lines.append(f"  Price momentum     {d['price_score']:+.3f}  —  {d['price_reason']}")
-    lines.append(f"  Technical (SMA/RSI/Vol) {d['technical_score']:+.3f}  —  {d['tech_reason']}")
-    lines.append(f"  News sentiment     {d['sentiment_score']:+.3f}  —  {d['sent_reason']}")
-    lines.append(f"  Analyst consensus  {d['analyst_score']:+.3f}  —  {d['analyst_reason']}")
-    lines.append(f"  Earnings (EPS)     {d['earnings_score']:+.3f}  —  {d['earn_reason']}")
-    lines.append("")
-    lines.append(f"Formula result: {d['formula_signal']} (combined score {d['formula_combined']:+.3f})")
-
-    pl_pct = d.get("pl_pct")
-    unrealized = d.get("unrealized_gain_loss")
-    if pl_pct is not None and unrealized is not None:
-        lines.append(f"Position P&L: {pl_pct:+.1f}% (unrealized ${unrealized:+.2f})")
-        if pl_pct < -15:
-            lines.append("⚠️  Position is down >15% — stop-loss territory.")
-        elif pl_pct > 25:
-            lines.append("⚠️  Position is up >25% — take-profit territory.")
-    else:
-        lines.append("Position: watchlist (not currently held)")
-
-    lines.append("")
-    lines.append("Provide your signal, score, and reason as JSON.")
-
+def _format_headlines(headlines: list[dict]) -> str:
+    if not headlines:
+        return "    headlines: (none recent)"
+    lines = []
+    for h in headlines:
+        label = f" [{h['sentiment_label']}]" if h.get("sentiment_label") else ""
+        lines.append(f'    - "{h["headline"]}"{label}')
     return "\n".join(lines)
+
+
+def _format_holding(h: dict) -> str:
+    pl = ""
+    if h.get("pl_pct") is not None:
+        pl = f" | P&L {h['pl_pct']:+.1f}% (${h.get('unrealized_gain_loss', 0):+.2f} unrealized)"
+    price = f"${h['current_price']:.2f}" if h.get("current_price") else "price n/a"
+    return (
+        f"- {h['ticker']}: {h['shares']:g} shares @ ${h['avg_cost_basis']:.2f} avg cost, "
+        f"now {price}{pl}\n"
+        f"    formula: {h['signal']} ({h['combined_score']:+.3f}) — {h['reason']}\n"
+        f"{_format_headlines(h.get('headlines', []))}"
+    )
+
+
+def _format_candidate(c: dict) -> str:
+    price = f"${c['current_price']:.2f}" if c.get("current_price") else "price n/a"
+    src = c.get("source", "screener")
+    return (
+        f"- {c['ticker']} ({src}): {price}\n"
+        f"    formula: {c['signal']} ({c['combined_score']:+.3f}) — {c['reason']}\n"
+        f"{_format_headlines(c.get('headlines', []))}"
+    )
+
+
+def _build_prompt(holdings: list[dict], candidates: list[dict], budget: float) -> str:
+    parts = []
+
+    parts.append("HOLDINGS (you own these — each must end up in sells or holds):")
+    if holdings:
+        parts.extend(_format_holding(h) for h in holdings)
+    else:
+        parts.append("(none — portfolio is empty)")
+
+    parts.append("")
+    parts.append("BUY CANDIDATES (you do NOT own these — buys may only come from this list):")
+    if candidates:
+        parts.extend(_format_candidate(c) for c in candidates)
+    else:
+        parts.append("(none passed the formula screen today)")
+
+    parts.append("")
+    parts.append(f"Cash budget available today: ${budget:.2f}")
+    parts.append("")
+    parts.append("Make today's decision.")
+
+    return "\n".join(parts)

@@ -120,6 +120,8 @@ async def dashboard():
           <button class="run-btn" onclick="openModal()">+ Add User</button>
         </div>""", _API_SECRET_KEY))
 
+    from app.daily_decision import get_latest_decision
+
     sections = ""
     with get_db() as conn:
         for user in users_rows:
@@ -147,7 +149,9 @@ async def dashboard():
                 "SELECT COUNT(*) as cnt FROM holdings WHERE user_id = ?", (user["id"],)
             ).fetchone()["cnt"]
 
-            sections += _render_user_section(user["id"], user["name"], ts, recs, holdings_count)
+            decision = get_latest_decision(conn, user["id"])
+
+            sections += _render_user_section(user["id"], user["name"], ts, recs, holdings_count, decision)
 
     return HTMLResponse(_render_page(sections, _API_SECRET_KEY))
 
@@ -237,7 +241,48 @@ _SIGNAL_META = {
 }
 
 
-def _render_user_section(user_id: int, name: str, generated_at, recs, holdings_count: int) -> str:
+def _render_decision_panel(decision: dict | None) -> str:
+    """Highlighted panel with the latest once-daily AI portfolio decision."""
+    if not decision:
+        return ""
+
+    when = (decision.get("generated_at") or "").replace("T", " ")[:16]
+    chips = ""
+    for b in decision.get("buys", []):
+        chips += f"""
+        <div class="ai-row">
+          <span class="ai-chip ai-chip-buy">BUY {b['ticker']}</span>
+          <span class="ai-alloc">${b.get('allocation_usd', 0):.2f} · {b.get('conviction', '')}</span>
+          <span class="ai-reason">{b.get('reason', '')}</span>
+        </div>"""
+    for s in decision.get("sells", []):
+        chips += f"""
+        <div class="ai-row">
+          <span class="ai-chip ai-chip-sell">SELL {s['ticker']}</span>
+          <span class="ai-alloc">{s.get('urgency', '')} urgency</span>
+          <span class="ai-reason">{s.get('reason', '')}</span>
+        </div>"""
+    if not chips:
+        chips = '<div class="ai-row"><span class="ai-chip ai-chip-hold">NO TRADES</span><span class="ai-reason">Hold everything today.</span></div>'
+
+    holds = decision.get("holds", [])
+    holds_line = ""
+    if holds:
+        holds_line = f'<div class="ai-holds">Holding: {", ".join(h["ticker"] for h in holds)}</div>'
+
+    return f"""
+    <div class="ai-panel">
+      <div class="ai-panel-head">
+        <span class="ai-title">🤖 Today's Decision</span>
+        <span class="ai-meta">{decision.get('model', '')} · {when}</span>
+      </div>
+      <p class="ai-summary">{decision.get('summary', '')}</p>
+      {chips}
+      {holds_line}
+    </div>"""
+
+
+def _render_user_section(user_id: int, name: str, generated_at, recs, holdings_count: int, decision: dict | None = None) -> str:
     ts_str = generated_at.replace("T", " ")[:16] if generated_at else None
 
     buys  = [r for r in recs if r["signal"] in ("STRONG_BUY", "BUY")]
@@ -263,9 +308,12 @@ def _render_user_section(user_id: int, name: str, generated_at, recs, holdings_c
       Signals are based on sentiment and analyst data only.
     </div>""" if broken_tickers else ""
 
+    decision_panel = _render_decision_panel(decision)
+
     if not recs:
         body = f"""
         {summary_pills}
+        {decision_panel}
         <p class="muted" style="margin-top:14px">No recommendations yet — run the analysis below.</p>"""
     else:
         rows = ""
@@ -291,10 +339,9 @@ def _render_user_section(user_id: int, name: str, generated_at, recs, holdings_c
 
             reason_short = _plain_summary(r)
 
-            ai_badge = '<span style="background:#7c3aed;color:white;font-size:9px;font-weight:700;padding:1px 4px;border-radius:3px;vertical-align:middle;margin-left:4px">AI</span>' if r.get("llm_used") else ""
             rows += f"""
             <tr class="rec-row" data-reason="{r['reason'] or ''}">
-              <td class="ticker-cell">{r['ticker']}{ai_badge}</td>
+              <td class="ticker-cell">{r['ticker']}</td>
               <td>
                 <span class="badge {meta['badge_cls']}"><span class="badge-dot"></span>{r['signal'].replace('_', ' ')}</span>
               </td>
@@ -314,6 +361,7 @@ def _render_user_section(user_id: int, name: str, generated_at, recs, holdings_c
 
         body = f"""
         {summary_pills}
+        {decision_panel}
         {data_warning}
         <div class="table-wrap">
         <table>
@@ -729,6 +777,49 @@ def _render_page(content: str, api_key: str = "") -> str:
       color: var(--accent);
     }}
 
+    /* ── AI decision panel ── */
+    .ai-panel {{
+      background: linear-gradient(135deg, rgba(124,58,237,.12), rgba(124,58,237,.04));
+      border: 1px solid rgba(167,139,250,.25);
+      border-radius: var(--radius-sm);
+      padding: 14px 16px;
+      margin-bottom: 16px;
+    }}
+    .ai-panel-head {{
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 6px;
+    }}
+    .ai-title {{ font-size: 13px; font-weight: 700; color: var(--purple); letter-spacing: .3px; }}
+    .ai-meta  {{ font-size: 10px; color: var(--text-muted); }}
+    .ai-summary {{ font-size: 13px; color: var(--text); line-height: 1.5; margin-bottom: 10px; }}
+    .ai-row {{
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 6px 0;
+      border-top: 1px solid rgba(255,255,255,.06);
+      font-size: 12px;
+    }}
+    .ai-chip {{
+      padding: 2px 9px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .3px;
+      white-space: nowrap;
+    }}
+    .ai-chip-buy  {{ background: rgba(34,197,94,.15);  color: #4ade80; border: 1px solid rgba(34,197,94,.3); }}
+    .ai-chip-sell {{ background: rgba(239,68,68,.15);  color: #f87171; border: 1px solid rgba(239,68,68,.3); }}
+    .ai-chip-hold {{ background: rgba(255,255,255,.07); color: var(--text-muted); border: 1px solid rgba(255,255,255,.12); }}
+    .ai-alloc  {{ color: #c4b5fd; font-weight: 600; white-space: nowrap; }}
+    .ai-reason {{ color: var(--text-muted); flex: 1; min-width: 180px; line-height: 1.45; }}
+    .ai-holds  {{ font-size: 11px; color: var(--text-muted); margin-top: 8px; }}
+
     /* ── Data warning banner ── */
     .data-warning {{
       background: rgba(245,158,11,.1);
@@ -950,7 +1041,7 @@ def _render_page(content: str, api_key: str = "") -> str:
     <div class="modal-box" style="max-width:500px">
       <button class="modal-close" onclick="closeManageHoldings()">✕</button>
       <h2>Manage Holdings</h2>
-      <p class="muted" style="margin-bottom:20px">Remove stocks you have sold</p>
+      <p class="muted" style="margin-bottom:20px">Update shares/cost after a trade, or remove stocks you have sold</p>
       <div id="manage-list">
         <p class="muted">Loading…</p>
       </div>
@@ -1112,12 +1203,19 @@ def _render_page(content: str, api_key: str = "") -> str:
         let rows = '';
         for (const h of data) {{
           rows += `
-          <div class="manage-holding-row">
-            <div>
-              <strong style="font-size:15px;color:var(--text)">${{h.ticker}}</strong>
-              <span class="muted" style="margin-left:8px">${{h.shares}} sh @ $${{h.avg_cost_basis.toFixed(2)}}</span>
-            </div>
-            <button class="manage-remove-btn" onclick="removeHolding(${{h.id}}, '${{h.ticker}}')">Remove</button>
+          <div class="manage-holding-row" style="flex-wrap:wrap;gap:8px">
+            <strong style="font-size:15px;color:var(--text);min-width:56px">${{h.ticker}}</strong>
+            <input id="mh-shares-${{h.id}}" type="number" min="0.0001" step="any" value="${{h.shares}}"
+                   style="width:90px;padding:6px 8px;background:var(--surface2);border:1.5px solid rgba(255,255,255,.1);border-radius:6px;font-size:13px;color:var(--text)"
+                   title="Shares">
+            <span class="muted">sh @ $</span>
+            <input id="mh-cost-${{h.id}}" type="number" min="0" step="any" value="${{h.avg_cost_basis.toFixed(2)}}"
+                   style="width:90px;padding:6px 8px;background:var(--surface2);border:1.5px solid rgba(255,255,255,.1);border-radius:6px;font-size:13px;color:var(--text)"
+                   title="Average cost per share">
+            <span style="display:flex;gap:6px;margin-left:auto">
+              <button class="btn-ghost" style="padding:6px 12px;font-size:12px" onclick="saveHolding(${{h.id}}, '${{h.ticker}}')">Save</button>
+              <button class="manage-remove-btn" onclick="removeHolding(${{h.id}}, '${{h.ticker}}')">Remove</button>
+            </span>
           </div>`;
         }}
         document.getElementById('manage-list').innerHTML = rows;
@@ -1129,6 +1227,27 @@ def _render_page(content: str, api_key: str = "") -> str:
     function closeManageHoldings() {{
       document.getElementById('manage-overlay').style.display = 'none';
       document.body.style.overflow = '';
+    }}
+
+    async function saveHolding(holdingId, ticker) {{
+      const shares = parseFloat(document.getElementById(`mh-shares-${{holdingId}}`).value);
+      const cost   = parseFloat(document.getElementById(`mh-cost-${{holdingId}}`).value);
+      if (!shares || shares <= 0 || isNaN(cost) || cost < 0) {{
+        showToast('❌ Enter valid shares and cost', 'err');
+        return;
+      }}
+      try {{
+        const res = await fetch(`/users/${{_manageUserId}}/portfolio/${{holdingId}}`, {{
+          method: 'PUT',
+          headers: _authHeaders,
+          body: JSON.stringify({{ shares, avg_cost_basis: cost }}),
+        }});
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to update');
+        showToast(`✅ ${{ticker}} updated — ${{shares}} sh @ $${{cost.toFixed(2)}}`, 'ok');
+      }} catch(e) {{
+        showToast('❌ ' + e.message, 'err');
+      }}
     }}
 
     async function removeHolding(holdingId, ticker) {{
@@ -1287,7 +1406,8 @@ def _render_page(content: str, api_key: str = "") -> str:
         const res = await fetch(`/run-daily/${{userId}}`, {{ method: 'POST', headers: _authHeaders }});
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Unknown error');
-        const summary = `✅ Analysis done — ${{data.recommendations_generated}} recs · ${{data.prices_refreshed}} prices · ${{data.articles_analyzed}} articles`;
+        const ai = data.ai_decision ? ' · 🤖 AI decision ready' : '';
+        const summary = `✅ Analysis done — ${{data.recommendations_generated}} recs · ${{data.prices_refreshed}} prices · ${{data.articles_analyzed}} articles${{ai}}`;
         const errors = data.errors && data.errors.length ? ` ⚠️ ${{data.errors.join(' | ')}}` : '';
         showToast(summary + errors, data.errors && data.errors.length ? 'err' : 'ok');
         setTimeout(() => location.reload(), 3000);
